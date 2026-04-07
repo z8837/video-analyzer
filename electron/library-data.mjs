@@ -199,11 +199,16 @@ function normalizeNumber(value) {
   return null
 }
 
-export function normalizeAnalysisRecord(raw, defaults = {}) {
+export function isLikelyCorruptedText(value) {
+  return typeof value === 'string' && /\?{3,}/.test(value) && !/[가-힣]/.test(value)
+}
+
+export function normalizeAnalysisRecord(raw, defaults = {}, options = {}) {
   if (!raw || typeof raw !== 'object') {
     return null
   }
 
+  const rejectCorruptedText = options.rejectCorruptedText === true
   const source = toPosixPath(
     raw.source || raw.projectRelativePath || raw.relativePath || raw.fileName || '',
   )
@@ -211,19 +216,31 @@ export function normalizeAnalysisRecord(raw, defaults = {}) {
     return null
   }
 
-  const title =
+  let title =
     (typeof raw.title === 'string' && raw.title.trim()) ||
     path.posix.basename(source)
-  const summary =
+  let summary =
     (typeof raw.summary === 'string' && raw.summary.trim()) ||
     '영상 내용을 요약하지 못했습니다.'
-  const details = normalizeStringArray(raw.details).slice(0, 12)
-  const categories = normalizeStringArray(raw.categories).slice(0, 5)
-  const keywords = normalizeStringArray(raw.keywords).slice(0, 8)
+  let details = normalizeStringArray(raw.details).slice(0, 12)
+  let categories = normalizeStringArray(raw.categories).slice(0, 5)
+  let keywords = normalizeStringArray(raw.keywords).slice(0, 8)
   const searchableText = [title, summary, ...details, ...categories, ...keywords].join(' ')
+  const corruptedText = isLikelyCorruptedText(searchableText)
 
-  if (/\?{3,}/.test(searchableText) && !/[가-힣]/.test(searchableText)) {
-    return null
+  if (corruptedText) {
+    if (rejectCorruptedText) {
+      return null
+    }
+
+    const fallbackFileName =
+      raw.fileName ||
+      path.posix.basename(source)
+    title = `${fallbackFileName} 분석 텍스트 손상`
+    summary = '기존 분석 파일의 한글 텍스트가 손상되었습니다. 다시 분석하면 정상 내용을 생성할 수 있습니다.'
+    details = ['기존 분석 마크다운의 본문이 물음표로 손상되어 장면 설명을 복구하지 못했습니다.']
+    categories = []
+    keywords = []
   }
 
   return {
@@ -259,6 +276,7 @@ export function normalizeAnalysisRecord(raw, defaults = {}) {
       (typeof raw.reasoningEffort === 'string' && raw.reasoningEffort.trim()) ||
       defaults.reasoningEffort ||
       'xhigh',
+    corruptedText,
   }
 }
 

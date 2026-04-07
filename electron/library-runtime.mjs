@@ -46,6 +46,130 @@ async function collectMarkdownFiles(folderPath) {
   return collected.sort((left, right) => left.localeCompare(right))
 }
 
+function parseJsonObjectFromText(text) {
+  const trimmed = text.replace(/^\uFEFF/, '').trim()
+  if (!trimmed) {
+    throw new Error('Codex 최종 응답이 비어 있습니다.')
+  }
+
+  const candidates = []
+  const fencedJson = extractJsonFence(trimmed)
+  if (fencedJson) {
+    candidates.push(fencedJson.trim())
+  }
+
+  candidates.push(trimmed)
+
+  const firstBrace = trimmed.indexOf('{')
+  const lastBrace = trimmed.lastIndexOf('}')
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    candidates.push(trimmed.slice(firstBrace, lastBrace + 1))
+  }
+
+  const seen = new Set()
+
+  for (const candidate of candidates) {
+    if (!candidate || seen.has(candidate)) {
+      continue
+    }
+
+    seen.add(candidate)
+
+    try {
+      return JSON.parse(candidate)
+    } catch {
+      // Try the next candidate shape.
+    }
+  }
+
+  throw new Error('Codex 최종 응답을 JSON으로 해석하지 못했습니다.')
+}
+
+export function parseAnalysisBatchResponse(responseText, defaults = {}) {
+  const payload = parseJsonObjectFromText(responseText)
+  const rawAnalyses = Array.isArray(payload?.analyses)
+    ? payload.analyses
+    : Array.isArray(payload?.videos)
+      ? payload.videos
+      : null
+
+  if (!rawAnalyses) {
+    throw new Error('Codex 최종 응답에 analyses 배열이 없습니다.')
+  }
+
+  const analyses = []
+  const seenSources = new Set()
+
+  for (const rawAnalysis of rawAnalyses) {
+    const record = normalizeAnalysisRecord(rawAnalysis, defaults, {
+      rejectCorruptedText: true,
+    })
+
+    if (!record) {
+      throw new Error('Codex가 손상되었거나 불완전한 분석 레코드를 반환했습니다.')
+    }
+
+    if (seenSources.has(record.source)) {
+      throw new Error(`Codex가 동일한 영상 결과를 중복 반환했습니다: ${record.source}`)
+    }
+
+    seenSources.add(record.source)
+    analyses.push(record)
+  }
+
+  return {
+    message:
+      typeof payload.message === 'string' && payload.message.trim()
+        ? payload.message.trim()
+        : '',
+    analyses,
+  }
+}
+
+export async function writePendingAnalysesFromReport(
+  projectRootPath,
+  resumeContext,
+  responseText,
+  defaults = {},
+) {
+  const { message, analyses } = parseAnalysisBatchResponse(responseText, defaults)
+  const pendingBySource = new Map(
+    resumeContext.pendingVideos.map((pendingVideo) => [pendingVideo.source, pendingVideo]),
+  )
+  const writtenSources = new Set()
+
+  for (const record of analyses) {
+    const pendingVideo = pendingBySource.get(record.source)
+    if (!pendingVideo) {
+      throw new Error(`Codex가 요청하지 않은 영상 결과를 반환했습니다: ${record.source}`)
+    }
+
+    const outputPath = path.join(projectRootPath, pendingVideo.outputMarkdown)
+    const nextRecord = {
+      ...record,
+      fileName: pendingVideo.fileName,
+      folderRelativePath: pendingVideo.folderRelativePath,
+    }
+
+    await writeText(outputPath, buildMarkdownFromRecord(nextRecord))
+    writtenSources.add(record.source)
+  }
+
+  const missingVideos = resumeContext.pendingVideos.filter(
+    (pendingVideo) => !writtenSources.has(pendingVideo.source),
+  )
+  if (missingVideos.length > 0) {
+    throw new Error(
+      `Codex가 ${missingVideos.length}개 영상의 분석 결과를 반환하지 않았습니다.`,
+    )
+  }
+
+  return {
+    message: message || `${writtenSources.size}개 영상을 분석했습니다.`,
+    writtenCount: writtenSources.size,
+  }
+}
+
 export async function migrateLegacyResultsToMarkdown(projectRootPath) {
   const { analyzeDir, legacyResultsPath } = getAnalyzePaths(projectRootPath)
   const legacyResults = await readJsonIfExists(legacyResultsPath)
@@ -148,7 +272,7 @@ export async function getResumeContext(projectRootPath, sourceFolderPath) {
   for (const fileName of directVideoFiles) {
     const source = getProjectRelativeVideoPath(projectRootPath, sourceFolderPath, fileName)
     const existing = existingByPath.get(source)
-    if (existing) {
+    if (existing && !existing.record.corruptedText) {
       reusableEntries.push(existing)
       continue
     }
@@ -205,7 +329,7 @@ export async function getCompletedPendingSources(projectRootPath, pendingVideos)
 
     try {
       const parsed = JSON.parse(extractJsonFence(markdown))
-      const record = normalizeAnalysisRecord(parsed)
+      const record = normalizeAnalysisRecord(parsed, {}, { rejectCorruptedText: true })
       if (record?.source === pendingVideo.source) {
         completedSources.add(pendingVideo.source)
       }

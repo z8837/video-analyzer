@@ -18,8 +18,8 @@ Scope:
 - Do not inspect unrelated repo files, docs, build outputs, or source code.
 
 Permanent outputs:
-- Create only the markdown files listed in `analyze/_task.json`.
-- Store them exactly at the `outputMarkdown` paths from `analyze/_task.json`.
+- Do not create markdown files directly.
+- The desktop app will write the final UTF-8 markdown files after parsing your response.
 - Do not create or update `analyze/results.json`.
 - Do not create or update `analyze/index.md`.
 - Do not create preview videos.
@@ -80,11 +80,11 @@ Field rules:
 - `reasoningEffort`: always `xhigh`.
 
 Windows UTF-8 rules:
-- Keep Korean text out of PowerShell console output when possible.
-- Prefer Python for writing markdown files.
-- Always write files with explicit `encoding='utf-8'`.
-- If you must read a Korean file through Python, read it with `encoding='utf-8'`.
-- Avoid relying on default PowerShell console encoding for Korean text.
+- Keep Korean text out of PowerShell command strings, here-strings, and console output when possible.
+- Never write the final markdown files yourself on Windows.
+- Do not embed Korean literals inside PowerShell commands.
+- If you use Python for probing or helper parsing, keep the command text ASCII-only when possible.
+- Put all Korean user-facing text only in your final JSON response.
 
 Accuracy rules:
 - If unsure, say `추정`, `~로 보임`, or `명확하지 않음`.
@@ -96,11 +96,40 @@ Workflow:
 2. For each pending video:
    - inspect metadata,
    - inspect only a few representative frames if needed,
-   - create one markdown file at the requested path.
+   - prepare one analysis object for the final JSON response.
 3. Do not rewrite unrelated existing markdown files.
-4. Keep the final response short.
+4. Do not save the final analysis text through shell-written files.
+5. Keep the final response short and machine-readable.
 
 Final response:
 - Respond in Korean.
-- Keep it within 5 lines.
-- Mention how many videos were newly analyzed.
+- Return exactly one JSON object and nothing else.
+- Do not wrap it in Markdown fences.
+- Use this shape:
+
+```json
+{
+  "schemaVersion": 1,
+  "message": "새로 3개 영상을 분석했습니다.",
+  "analyses": [
+    {
+      "source": "videos/example.mp4",
+      "fileName": "example.mp4",
+      "title": "짧은 한국어 제목",
+      "summary": "짧은 한국어 요약",
+      "details": ["장면 설명 1", "장면 설명 2"],
+      "categories": ["태그1", "태그2"],
+      "keywords": ["검색어1", "검색어2"],
+      "durationSeconds": 8.42,
+      "width": 2160,
+      "height": 3840,
+      "fps": 30,
+      "hasAudio": true,
+      "sampleImage": "",
+      "generatedAt": "2026-04-07T12:34:56+09:00",
+      "model": "gpt-5.4",
+      "reasoningEffort": "xhigh"
+    }
+  ]
+}
+```

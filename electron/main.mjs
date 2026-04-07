@@ -18,7 +18,9 @@ import {
 import {
   getCompletedPendingSources,
   getResumeContext,
+  parseAnalysisBatchResponse,
   readLibraryEntries,
+  writePendingAnalysesFromReport,
   writeTaskFile,
 } from './library-runtime.mjs'
 
@@ -371,13 +373,17 @@ function buildPromptWithContext(projectRootPath, sourceFolderPath, resumeContext
     `The selected source folder is "${sourceFolderPath}".`,
     `The selected source folder relative to the project root is "${resumeContext.folderRelativePath}".`,
     `Read "${taskFilePath}" and analyze only the pending videos listed there.`,
-    `Create only the markdown files listed in "${taskFilePath}".`,
     `Reuse count for this run: ${resumeContext.reusableCount}. Pending new analyses: ${resumeContext.pendingCount}.`,
     'Do not inspect unrelated repository files or scan the whole project.',
+    'Do not create or update any markdown files yourself.',
     'Do not create or update analyze/results.json, analyze/index.md, preview videos, or permanent sample-sheet images.',
     'Keep the workflow short: metadata plus a few representative frames per video are enough unless absolutely necessary.',
-    'On Windows, prefer UTF-8-safe reading and writing. Avoid shell commands that print Korean text through the default console encoding.',
-    'Your final response must be a short Korean summary in 5 lines or fewer.',
+    'On Windows, never embed Korean literals inside PowerShell command strings or here-strings.',
+    'Keep Korean text only in your final response JSON. The desktop app will write the UTF-8 markdown files for you.',
+    'Your final response must be exactly one JSON object and nothing else.',
+    'Use this shape: {"schemaVersion":1,"message":"짧은 한국어 완료 문장","analyses":[...]}',
+    'Each analyses item must contain source, fileName, title, summary, details, categories, keywords, durationSeconds, width, height, fps, hasAudio, sampleImage, generatedAt, model, reasoningEffort.',
+    'The analyses array must contain one item for every pending video from analyze/_task.json and source must exactly match the task file.',
   ].join('\n')
 }
 
@@ -544,6 +550,16 @@ async function startAnalysis(sourceFolderPath) {
     const finalMessage = await readTextIfExists(outputLastMessagePath)
     if (code === 0) {
       try {
+        const parsedReport = parseAnalysisBatchResponse(finalMessage, {
+          model: FIXED_MODEL,
+          reasoningEffort: FIXED_REASONING,
+        })
+
+        await writePendingAnalysesFromReport(projectRootPath, resumeContext, finalMessage, {
+          model: FIXED_MODEL,
+          reasoningEffort: FIXED_REASONING,
+        })
+
         await writeProgressFile(projectRootPath, {
           status: 'completed',
           totalFiles: resumeContext.totalFiles,
@@ -552,13 +568,13 @@ async function startAnalysis(sourceFolderPath) {
           pendingFiles: 0,
           percent: 100,
           currentFile: '',
-          message: '분석이 완료되었습니다.',
+          message: parsedReport.message || '분석이 완료되었습니다.',
         })
         emitAnalysisEvent({
           type: 'completed',
           folderPath: projectRootPath,
           code,
-          finalMessage,
+          finalMessage: parsedReport.message || finalMessage,
           analysis: await loadAnalysis(projectRootPath),
         })
       } catch (error) {
