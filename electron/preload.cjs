@@ -6,6 +6,9 @@ contextBridge.exposeInMainWorld('codexVideoAnalyzer', {
   getEnvironmentStatus: () => ipcRenderer.invoke('environment:get'),
   pickRootFolder: () => ipcRenderer.invoke('dialog:pick-root-folder'),
   scanFolders: (rootPath) => ipcRenderer.invoke('folders:scan', rootPath),
+  loadFolderTree: (rootPath) => ipcRenderer.invoke('folders:tree', rootPath),
+  loadFolderVideos: (rootPath, folderPath) =>
+    ipcRenderer.invoke('folders:videos', rootPath, folderPath),
   loadAnalysis: (folderPath) => ipcRenderer.invoke('analysis:load', folderPath),
   loadAnalysisProgress: (folderPath) =>
     ipcRenderer.invoke('analysis:load-progress', folderPath),

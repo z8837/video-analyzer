@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useState } from 'react'
+import { startTransition, useDeferredValue, useEffect, useMemo, useState } from 'react'
 import type { SyntheticEvent } from 'react'
 import './App.css'
 import type {
@@ -8,7 +8,8 @@ import type {
   AnalysisVideo,
   AppEvent,
   EnvironmentStatus,
-  FolderItem,
+  FolderTreeNode,
+  FolderVideoItem,
   ToolSettings,
 } from './types'
 
@@ -26,14 +27,22 @@ const EMPTY_PROGRESS: AnalysisProgress = {
   updatedAt: '',
 }
 
-function VideoThumbnail({ video }: { video: AnalysisVideo }) {
+function VideoThumbnail({
+  videoUrl,
+  sampleImageUrl,
+  title,
+}: {
+  videoUrl: string
+  sampleImageUrl?: string
+  title: string
+}) {
   const handleLoadedMetadata = (event: SyntheticEvent<HTMLVideoElement>) => {
     const element = event.currentTarget
     if (element.duration > 0 && element.currentTime === 0) {
       try {
         element.currentTime = Math.min(0.05, element.duration)
       } catch {
-        // Ignore seek errors and keep the default first frame.
+        // Keep the default first frame if seeking is blocked.
       }
     }
   }
@@ -44,19 +53,18 @@ function VideoThumbnail({ video }: { video: AnalysisVideo }) {
 
   return (
     <div
-      className={`video-thumb ${video.sampleImageUrl ? 'has-image' : 'has-video'}`}
-      style={
-        video.sampleImageUrl ? { backgroundImage: `url("${video.sampleImageUrl}")` } : undefined
-      }
+      className={`video-thumb ${sampleImageUrl ? 'has-image' : 'has-video'}`}
+      style={sampleImageUrl ? { backgroundImage: `url("${sampleImageUrl}")` } : undefined}
+      aria-label={title}
     >
-      {!video.sampleImageUrl && (
+      {!sampleImageUrl && videoUrl && (
         <video
-          key={video.videoUrl}
+          key={videoUrl}
           className="video-thumb-player"
-          src={video.videoUrl}
+          src={videoUrl}
           muted
           playsInline
-          preload="auto"
+          preload="metadata"
           aria-hidden="true"
           onLoadedMetadata={handleLoadedMetadata}
           onLoadedData={handleFrameReady}
@@ -67,34 +75,165 @@ function VideoThumbnail({ video }: { video: AnalysisVideo }) {
   )
 }
 
+function FolderTreeBranch({
+  node,
+  depth,
+  expandedPaths,
+  selectedPath,
+  onToggle,
+  onSelect,
+}: {
+  node: FolderTreeNode
+  depth: number
+  expandedPaths: Set<string>
+  selectedPath: string
+  onToggle: (folderPath: string) => void
+  onSelect: (folderPath: string) => void
+}) {
+  const hasChildren = node.children.length > 0
+  const isExpanded = expandedPaths.has(node.path)
+  const isSelected = node.path === selectedPath
+  const label = node.relativePath === '.' ? '기본 폴더' : node.name
+
+  return (
+    <div className="tree-branch">
+      <div className={`tree-row ${isSelected ? 'selected' : ''}`}>
+        <button
+          className="tree-expander"
+          type="button"
+          onClick={() => hasChildren && onToggle(node.path)}
+          disabled={!hasChildren}
+          style={{ marginLeft: `${depth * 16}px` }}
+          aria-label={hasChildren ? `${label} 펼치기/접기` : `${label} 하위 폴더 없음`}
+        >
+          {hasChildren ? (isExpanded ? '▾' : '▸') : '•'}
+        </button>
+        <button className="tree-label" type="button" onClick={() => onSelect(node.path)}>
+          <strong>{label}</strong>
+          <span>{node.relativePath}</span>
+          <small>
+            직접 {node.directVideoCount}개 · 전체 {node.totalVideoCount}개
+          </small>
+        </button>
+      </div>
+
+      {hasChildren && isExpanded && (
+        <div className="tree-children">
+          {node.children.map((child) => (
+            <FolderTreeBranch
+              key={child.path}
+              node={child}
+              depth={depth + 1}
+              expandedPaths={expandedPaths}
+              selectedPath={selectedPath}
+              onToggle={onToggle}
+              onSelect={onSelect}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function App() {
   const [settings, setSettings] = useState<ToolSettings | null>(null)
   const [draftSettings, setDraftSettings] = useState<ToolSettings | null>(null)
   const [environment, setEnvironment] = useState<EnvironmentStatus | null>(null)
   const [rootFolder, setRootFolder] = useState('')
-  const [folders, setFolders] = useState<FolderItem[]>([])
+  const [folderTree, setFolderTree] = useState<FolderTreeNode | null>(null)
+  const [folderVideos, setFolderVideos] = useState<FolderVideoItem[]>([])
   const [selectedFolderPath, setSelectedFolderPath] = useState('')
   const [analysis, setAnalysis] = useState<AnalysisData | null>(null)
   const [progress, setProgress] = useState<AnalysisProgress>(EMPTY_PROGRESS)
   const [selectedVideoPath, setSelectedVideoPath] = useState('')
   const [searchText, setSearchText] = useState('')
-  const [activeTag, setActiveTag] = useState('')
   const [logLines, setLogLines] = useState<string[]>([])
-  const [statusMessage, setStatusMessage] = useState('프로젝트를 준비하는 중...')
+  const [statusMessage, setStatusMessage] = useState('작업 공간을 준비하는 중입니다.')
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [isBusy, setIsBusy] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
+  const [expandedFolderPaths, setExpandedFolderPaths] = useState<string[]>([])
   const deferredSearchText = useDeferredValue(searchText)
 
-  const selectedFolder =
-    folders.find((folder) => folder.path === selectedFolderPath) ?? null
-  const selectedVideo =
-    analysis?.videos.find((video) => video.absolutePath === selectedVideoPath) ?? null
   const analyzeFolderPath = rootFolder
     ? `${rootFolder.replace(/[\\/]+$/, '')}${rootFolder.includes('\\') ? '\\' : '/'}analyze`
     : ''
 
-  const refreshBaseFolderData = async (basePath = rootFolder) => {
+  const analysisByPath = useMemo(() => {
+    return new Map((analysis?.videos ?? []).map((video) => [video.absolutePath, video]))
+  }, [analysis])
+
+  const folderVideoByPath = useMemo(() => {
+    return new Map(folderVideos.map((video) => [video.absolutePath, video]))
+  }, [folderVideos])
+
+  const expandedPathSet = useMemo(() => new Set(expandedFolderPaths), [expandedFolderPaths])
+
+  const filteredAnalysisVideos = useMemo(() => {
+    const query = deferredSearchText.trim().toLowerCase()
+
+    return (analysis?.videos ?? []).filter((video) => {
+      if (!query) {
+        return true
+      }
+
+      const haystack = [
+        video.title,
+        video.summary,
+        video.fileName,
+        video.relativePath,
+        ...video.details,
+        ...video.categories,
+        ...video.keywords,
+      ]
+        .join(' ')
+        .toLowerCase()
+
+      return haystack.includes(query)
+    })
+  }, [analysis, deferredSearchText])
+
+  const selectedFolderNode = useMemo(() => {
+    if (!folderTree || !selectedFolderPath) {
+      return folderTree
+    }
+
+    return findTreeNode(folderTree, selectedFolderPath) ?? folderTree
+  }, [folderTree, selectedFolderPath])
+
+  const selectedAnalysisVideo = selectedVideoPath
+    ? analysisByPath.get(selectedVideoPath) ?? null
+    : null
+
+  const selectedFolderVideo = selectedVideoPath
+    ? folderVideoByPath.get(selectedVideoPath) ?? null
+    : null
+
+  const selectedVideo = selectedAnalysisVideo ?? selectedFolderVideo
+  const selectedVideoIsAnalyzed = Boolean(selectedAnalysisVideo || selectedFolderVideo?.analyzed)
+
+  const analyzedFolderVideoCount = folderVideos.filter((video) => video.analyzed).length
+  const pendingFolderVideoCount = Math.max(folderVideos.length - analyzedFolderVideoCount, 0)
+
+  const displayProgress = useMemo(() => {
+    if (progress.exists) {
+      return progress
+    }
+
+    return {
+      ...EMPTY_PROGRESS,
+      folderPath: selectedFolderPath,
+      totalFiles: selectedFolderNode?.directVideoCount ?? folderVideos.length,
+      pendingFiles: selectedFolderNode?.directVideoCount ?? folderVideos.length,
+    }
+  }, [folderVideos.length, progress, selectedFolderNode, selectedFolderPath])
+
+  const refreshWorkspace = async (
+    basePath = rootFolder,
+    preferredFolderPath = selectedFolderPath || basePath,
+    preserveSelectedVideo = true,
+  ) => {
     if (!basePath) {
       return
     }
@@ -103,30 +242,84 @@ function App() {
     setErrorMessage('')
 
     try {
-      const [scannedFolders, loadedAnalysis, loadedProgress] = await Promise.all([
-        window.codexVideoAnalyzer.scanFolders(basePath),
+      const [loadedTree, loadedAnalysis, loadedProgress] = await Promise.all([
+        window.codexVideoAnalyzer.loadFolderTree(basePath),
         window.codexVideoAnalyzer.loadAnalysis(basePath),
         window.codexVideoAnalyzer.loadAnalysisProgress(basePath),
       ])
 
-      setFolders(scannedFolders)
-      setAnalysis(loadedAnalysis)
-      setProgress(loadedProgress)
-      setSelectedFolderPath((current) => {
-        const preserved = scannedFolders.find((folder) => folder.path === current)?.path ?? ''
-        return preserved || scannedFolders[0]?.path || ''
-      })
-      setSelectedVideoPath((current) => {
-        if (current && loadedAnalysis.videos.some((video) => video.absolutePath === current)) {
-          return current
-        }
+      const nextFolderPath = pickFolderPath(loadedTree, preferredFolderPath || basePath)
+      const loadedFolderVideos = nextFolderPath
+        ? await window.codexVideoAnalyzer.loadFolderVideos(basePath, nextFolderPath)
+        : []
 
-        return loadedAnalysis.videos[0]?.absolutePath ?? ''
+      startTransition(() => {
+        setFolderTree(loadedTree)
+        setAnalysis(loadedAnalysis)
+        setProgress(loadedProgress)
+        setSelectedFolderPath(nextFolderPath)
+        setFolderVideos(loadedFolderVideos)
+        setExpandedFolderPaths((current) =>
+          mergeExpandedFolderPaths(current, loadedTree, nextFolderPath),
+        )
+        setSelectedVideoPath((current) =>
+          pickSelectedVideoPath(
+            current,
+            loadedAnalysis.videos,
+            loadedFolderVideos,
+            preserveSelectedVideo,
+          ),
+        )
       })
+
+      if (loadedAnalysis.videos.length > 0) {
+        setStatusMessage(`analyze에서 ${loadedAnalysis.videos.length}개 영상을 불러왔습니다.`)
+      } else if (loadedFolderVideos.length > 0) {
+        setStatusMessage(
+          `${formatFolderPath(nextFolderPath, basePath)} 폴더의 영상 ${loadedFolderVideos.length}개를 불러왔습니다.`,
+        )
+      } else {
+        setStatusMessage('아직 분석 결과가 없습니다. 하단 폴더에서 영상을 선택해 주세요.')
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error))
+    } finally {
+      setIsBusy(false)
+    }
+  }
+
+  const loadFolderVideosForPath = async (folderPath: string, preserveSelectedVideo = false) => {
+    if (!rootFolder || !folderPath) {
+      return
+    }
+
+    setIsBusy(true)
+    setErrorMessage('')
+
+    try {
+      const loadedFolderVideos = await window.codexVideoAnalyzer.loadFolderVideos(
+        rootFolder,
+        folderPath,
+      )
+
+      startTransition(() => {
+        setSelectedFolderPath(folderPath)
+        setFolderVideos(loadedFolderVideos)
+        setExpandedFolderPaths((current) =>
+          mergeExpandedFolderPaths(current, folderTree, folderPath),
+        )
+        setSelectedVideoPath((current) =>
+          pickSelectedVideoPath(
+            current,
+            analysis?.videos ?? [],
+            loadedFolderVideos,
+            preserveSelectedVideo,
+          ),
+        )
+      })
+
       setStatusMessage(
-        scannedFolders.length > 0
-          ? `${scannedFolders.length}개 소스 폴더와 저장된 analyze 결과를 새로 불러왔습니다.`
-          : '선택한 기본 디렉토리에서 영상 폴더를 찾지 못했습니다.',
+        `${formatFolderPath(folderPath, rootFolder)} 폴더의 영상 ${loadedFolderVideos.length}개를 불러왔습니다.`,
       )
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error))
@@ -153,7 +346,11 @@ function App() {
         setDraftSettings(loadedSettings)
         setEnvironment(loadedEnvironment)
         setRootFolder(loadedSettings.lastRootPath)
-        setStatusMessage('도구 점검이 끝났습니다. 상단 File 메뉴에서 기본 폴더를 선택하세요.')
+        setStatusMessage(
+          loadedSettings.lastRootPath
+            ? '기본 폴더를 불러오는 중입니다.'
+            : '기본 폴더를 선택하면 작업 공간이 여기에 표시됩니다.',
+        )
       } catch (error) {
         if (!cancelled) {
           setErrorMessage(error instanceof Error ? error.message : String(error))
@@ -161,7 +358,7 @@ function App() {
       }
     }
 
-    bootstrap()
+    void bootstrap()
 
     return () => {
       cancelled = true
@@ -174,8 +371,9 @@ function App() {
         setSettings(event.settings)
         setDraftSettings(event.settings)
         setRootFolder(event.rootPath)
-        setStatusMessage(`기본 폴더를 불러왔습니다: ${event.rootPath}`)
+        setSearchText('')
         setErrorMessage('')
+        setStatusMessage(`기본 폴더를 선택했습니다: ${event.rootPath}`)
       }
     })
 
@@ -183,119 +381,72 @@ function App() {
   }, [])
 
   useEffect(() => {
+    if (!rootFolder) {
+      startTransition(() => {
+        setFolderTree(null)
+        setFolderVideos([])
+        setSelectedFolderPath('')
+        setAnalysis(null)
+        setProgress(EMPTY_PROGRESS)
+        setSelectedVideoPath('')
+        setExpandedFolderPaths([])
+      })
+      return
+    }
+
+    void refreshWorkspace(rootFolder, selectedFolderPath || rootFolder, true)
+  }, [rootFolder])
+
+  useEffect(() => {
     const unsubscribe = window.codexVideoAnalyzer.onAnalysisEvent(
       async (event: AnalysisEvent) => {
         if (event.type === 'started') {
           setIsAnalyzing(true)
           setLogLines([])
-          setStatusMessage(`분석 시작: ${event.folderPath}`)
+          setStatusMessage(`분석 시작: ${formatFolderPath(event.folderPath, rootFolder)}`)
           setErrorMessage('')
-          const nextProgress = await window.codexVideoAnalyzer.loadAnalysisProgress(
-            event.folderPath,
-          )
-          setProgress(nextProgress)
+          setProgress(await window.codexVideoAnalyzer.loadAnalysisProgress(event.folderPath))
           return
         }
 
         if (event.type === 'log') {
-          setLogLines((previous) =>
-            [...previous, event.message.trimEnd()].filter(Boolean).slice(-500),
-          )
+          startTransition(() => {
+            setLogLines((previous) =>
+              [...previous, event.message.trimEnd()].filter(Boolean).slice(-500),
+            )
+          })
           return
         }
 
         if (event.type === 'completed') {
           setIsAnalyzing(false)
-          setAnalysis(event.analysis)
-          setSelectedVideoPath((current) => {
-            if (
-              current &&
-              event.analysis.videos.some((video) => video.absolutePath === current)
-            ) {
-              return current
-            }
-
-            return event.analysis.videos[0]?.absolutePath ?? ''
-          })
-          setProgress(await window.codexVideoAnalyzer.loadAnalysisProgress(event.folderPath))
+          await refreshWorkspace(event.folderPath, selectedFolderPath || event.folderPath, true)
           setStatusMessage(event.finalMessage || '분석이 완료되었습니다.')
           return
         }
 
         if (event.type === 'cancelled') {
           setIsAnalyzing(false)
-          if (event.folderPath) {
-            setProgress(await window.codexVideoAnalyzer.loadAnalysisProgress(event.folderPath))
+          if (rootFolder) {
+            await refreshWorkspace(rootFolder, selectedFolderPath || rootFolder, true)
           }
-          setStatusMessage('분석이 취소되었습니다.')
+          setStatusMessage('분석을 취소했습니다.')
           return
         }
 
         if (event.type === 'failed') {
           setIsAnalyzing(false)
-          if (event.folderPath) {
-            setProgress(await window.codexVideoAnalyzer.loadAnalysisProgress(event.folderPath))
+          if (rootFolder) {
+            await refreshWorkspace(rootFolder, selectedFolderPath || rootFolder, true)
           }
-          setErrorMessage(
-            [event.error, event.finalMessage].filter(Boolean).join('\n\n'),
-          )
-          setStatusMessage('분석에 실패했습니다.')
+          setErrorMessage([event.error, event.finalMessage].filter(Boolean).join('\n\n'))
+          setStatusMessage('분석 중 오류가 발생했습니다.')
         }
       },
     )
 
     return unsubscribe
-  }, [])
-
-  useEffect(() => {
-    if (!rootFolder) {
-      setFolders([])
-      setSelectedFolderPath('')
-      setAnalysis(null)
-      setProgress(EMPTY_PROGRESS)
-      setSelectedVideoPath('')
-      return
-    }
-
-    const refreshRootData = async () => {
-      setIsBusy(true)
-      setErrorMessage('')
-
-      try {
-        const [scannedFolders, loadedAnalysis, loadedProgress] = await Promise.all([
-          window.codexVideoAnalyzer.scanFolders(rootFolder),
-          window.codexVideoAnalyzer.loadAnalysis(rootFolder),
-          window.codexVideoAnalyzer.loadAnalysisProgress(rootFolder),
-        ])
-
-        setFolders(scannedFolders)
-        setAnalysis(loadedAnalysis)
-        setProgress(loadedProgress)
-        setSelectedFolderPath((current) => {
-          const preserved = scannedFolders.find((folder) => folder.path === current)?.path ?? ''
-          return preserved || scannedFolders[0]?.path || ''
-        })
-        setSelectedVideoPath((current) => {
-          if (current && loadedAnalysis.videos.some((video) => video.absolutePath === current)) {
-            return current
-          }
-
-          return loadedAnalysis.videos[0]?.absolutePath ?? ''
-        })
-        setStatusMessage(
-          scannedFolders.length > 0
-            ? `${scannedFolders.length}개 소스 폴더와 저장된 analyze 결과를 새로 불러왔습니다.`
-            : '선택한 기본 디렉토리에서 영상 폴더를 찾지 못했습니다.',
-        )
-      } catch (error) {
-        setErrorMessage(error instanceof Error ? error.message : String(error))
-      } finally {
-        setIsBusy(false)
-      }
-    }
-
-    refreshRootData()
-  }, [rootFolder])
+  }, [rootFolder, selectedFolderPath])
 
   useEffect(() => {
     if (!isAnalyzing || !rootFolder) {
@@ -320,7 +471,7 @@ function App() {
       }
     }
 
-    poll()
+    void poll()
 
     return () => {
       cancelled = true
@@ -330,79 +481,19 @@ function App() {
     }
   }, [isAnalyzing, rootFolder])
 
-  const tags = useMemo(() => {
-    const counts = new Map<string, number>()
-
-    for (const video of analysis?.videos ?? []) {
-      for (const tag of [...video.categories, ...video.keywords]) {
-        counts.set(tag, (counts.get(tag) ?? 0) + 1)
-      }
-    }
-
-    return [...counts.entries()]
-      .sort((left, right) => {
-        if (right[1] !== left[1]) {
-          return right[1] - left[1]
-        }
-        return left[0].localeCompare(right[0], 'ko')
-      })
-      .slice(0, 16)
-  }, [analysis])
-
-  const filteredVideos = useMemo(() => {
-    const query = deferredSearchText.trim().toLowerCase()
-
-    return (analysis?.videos ?? []).filter((video) => {
-      const haystack = [
-        video.title,
-        video.summary,
-        video.fileName,
-        video.relativePath,
-        ...video.details,
-        ...video.categories,
-        ...video.keywords,
-      ]
-        .join(' ')
-        .toLowerCase()
-
-      const matchesQuery = !query || haystack.includes(query)
-      const matchesTag =
-        !activeTag ||
-        video.categories.includes(activeTag) ||
-        video.keywords.includes(activeTag)
-
-      return matchesQuery && matchesTag
-    })
-  }, [activeTag, analysis, deferredSearchText])
-
-  const displayProgress = useMemo(() => {
-    if (progress.exists) {
-      return progress
-    }
-
-    return {
-      ...EMPTY_PROGRESS,
-      folderPath: selectedFolderPath,
-      totalFiles: selectedFolder?.videoCount ?? 0,
-      pendingFiles: selectedFolder?.videoCount ?? 0,
-    }
-  }, [progress, selectedFolder, selectedFolderPath])
-
   const handleRefreshEnvironment = async () => {
     setIsBusy(true)
     setErrorMessage('')
 
     try {
-      const nextSettings = draftSettings ?? settings
-      if (nextSettings) {
-        const saved = await window.codexVideoAnalyzer.saveSettings(nextSettings)
-        setSettings(saved)
-        setDraftSettings(saved)
-      }
+      const nextSettings = draftSettings ?? settings ?? getFallbackSettings()
+      const saved = await window.codexVideoAnalyzer.saveSettings(nextSettings)
+      const refreshedEnvironment = await window.codexVideoAnalyzer.getEnvironmentStatus()
 
-      const refreshed = await window.codexVideoAnalyzer.getEnvironmentStatus()
-      setEnvironment(refreshed)
-      setStatusMessage('도구 경로와 로그인 상태를 다시 확인했습니다.')
+      setSettings(saved)
+      setDraftSettings(saved)
+      setEnvironment(refreshedEnvironment)
+      setStatusMessage('도구 경로와 로그인 상태를 다시 점검했습니다.')
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error))
     } finally {
@@ -410,85 +501,113 @@ function App() {
     }
   }
 
-  const handleAnalyze = async () => {
-    if (!selectedFolderPath || !rootFolder) {
+  const handlePickRootFolder = async () => {
+    setIsBusy(true)
+    setErrorMessage('')
+
+    try {
+      const nextRootPath = await window.codexVideoAnalyzer.pickRootFolder()
+      if (!nextRootPath) {
+        return
+      }
+
+      const nextSettings = {
+        ...(draftSettings ?? settings ?? getFallbackSettings()),
+        lastRootPath: nextRootPath,
+      }
+      const saved = await window.codexVideoAnalyzer.saveSettings(nextSettings)
+
+      setSettings(saved)
+      setDraftSettings(saved)
+      setRootFolder(nextRootPath)
+      setSearchText('')
+      setStatusMessage(`기본 폴더를 선택했습니다: ${nextRootPath}`)
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error))
+    } finally {
+      setIsBusy(false)
+    }
+  }
+
+  const handleAnalyzeSelectedFolder = async () => {
+    if (!rootFolder || !selectedFolderPath) {
       return
     }
 
     setErrorMessage('')
-    const sourceLabel =
-      folders.find((folder) => folder.path === selectedFolderPath)?.relativePath || '.'
-    setStatusMessage(`Codex CLI에 "${sourceLabel}" 폴더 추가 분석 작업을 전달했습니다.`)
+    setStatusMessage(
+      `Codex에 ${formatFolderPath(selectedFolderPath, rootFolder)} 폴더 분석을 요청했습니다.`,
+    )
 
     try {
       await window.codexVideoAnalyzer.startAnalysis(selectedFolderPath)
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error))
       setIsAnalyzing(false)
+      setErrorMessage(error instanceof Error ? error.message : String(error))
     }
-  }
-
-  const handleRefreshBaseFolder = async () => {
-    await refreshBaseFolderData()
   }
 
   const handleCancel = async () => {
     await window.codexVideoAnalyzer.cancelAnalysis()
   }
 
-  const renderCheck = (
-    label: string,
-    check: EnvironmentStatus['checks'][keyof EnvironmentStatus['checks']],
-  ) => (
-    <article className={`status-pill ${check.ok ? 'ok' : 'bad'}`}>
-      <span>{label}</span>
-      <strong>{check.ok ? '준비됨' : '확인 필요'}</strong>
-      <small>{check.detail}</small>
-    </article>
-  )
+  const handleToggleFolder = (folderPath: string) => {
+    setExpandedFolderPaths((current) => {
+      const next = new Set(current)
+      if (next.has(folderPath)) {
+        next.delete(folderPath)
+      } else {
+        next.add(folderPath)
+      }
+      return [...next]
+    })
+  }
 
   return (
     <main className="app-shell">
-      <section className="hero-panel">
-        <div>
-          <p className="eyebrow">Codex CLI Local Workflow</p>
-          <h1>Codex Video Analyzer</h1>
-          <p className="lede">
-            폴더를 나눠 둔 영상 라이브러리에서 원하는 폴더만 골라
-            <strong> Codex CLI + GPT-5.4</strong>로 분석하고, 결과를
-            태그/검색/미리보기까지 한 화면에서 처리합니다.
-          </p>
-        </div>
+      <section className="panel control-panel">
+        <div className="control-header">
+          <div>
+            <p className="section-kicker">Workspace</p>
+            <h1>기본 폴더 작업 공간</h1>
+            <p className="path-copy">
+              {rootFolder || '기본 폴더를 선택하면 analyze 결과와 하위 폴더 구조를 불러옵니다.'}
+            </p>
+          </div>
 
-        <div className="hero-meta">
-          <div>
-            <span>고정 모델</span>
-            <strong>{environment?.model ?? 'gpt-5.4'}</strong>
-          </div>
-          <div>
-            <span>Reasoning</span>
-            <strong>{environment?.reasoningEffort ?? 'xhigh'}</strong>
-          </div>
-          <div>
-            <span>상태</span>
-            <strong>{isAnalyzing ? '분석 중' : '대기 중'}</strong>
-          </div>
-        </div>
-      </section>
-
-      <section className="toolbar-grid">
-        <article className="panel settings-panel">
-          <div className="section-heading">
-            <div>
-              <p className="section-kicker">Environment</p>
-              <h2>로컬 도구 경로</h2>
-            </div>
-            <button className="ghost-button" onClick={handleRefreshEnvironment}>
-              저장 및 점검
+          <div className="action-group">
+            <button className="ghost-button" onClick={handlePickRootFolder} disabled={isBusy}>
+              기본 폴더 선택
+            </button>
+            <button
+              className="ghost-button"
+              onClick={() => rootFolder && window.codexVideoAnalyzer.showItemInFolder(rootFolder)}
+              disabled={!rootFolder}
+            >
+              기본 폴더 열기
+            </button>
+            <button
+              className="ghost-button"
+              onClick={() =>
+                analyzeFolderPath &&
+                window.codexVideoAnalyzer.showItemInFolder(analyzeFolderPath)
+              }
+              disabled={!analyzeFolderPath}
+            >
+              analyze 열기
+            </button>
+            <button
+              className="ghost-button"
+              onClick={() => refreshWorkspace(rootFolder, selectedFolderPath || rootFolder, true)}
+              disabled={!rootFolder || isBusy}
+            >
+              새로고침
             </button>
           </div>
+        </div>
 
-          <label className="field">
+        <div className="tool-grid">
+          <label className="field compact-field">
             <span>Codex 실행 파일</span>
             <input
               value={draftSettings?.codexCommand ?? ''}
@@ -502,7 +621,7 @@ function App() {
             />
           </label>
 
-          <label className="field">
+          <label className="field compact-field">
             <span>ffmpeg 실행 파일</span>
             <input
               value={draftSettings?.ffmpegCommand ?? ''}
@@ -516,167 +635,73 @@ function App() {
             />
           </label>
 
-          <div className="root-picker">
-            <div>
-              <p className="section-kicker">Base Folder</p>
-              <strong>{rootFolder || '상단 File 메뉴에서 선택'}</strong>
-            </div>
-            <div className="action-group">
-              <span className="platform-chip">File &gt; 기본 폴더 선택...</span>
-              <button
-                className="ghost-button"
-                onClick={handleRefreshBaseFolder}
-                disabled={!rootFolder || isBusy || isAnalyzing}
-              >
-                새로고침
-              </button>
-            </div>
-          </div>
-        </article>
+          <button className="primary-button save-button" onClick={handleRefreshEnvironment}>
+            저장 및 점검
+          </button>
+        </div>
 
-        <article className="panel checks-panel">
-          <div className="section-heading">
-            <div>
-              <p className="section-kicker">Readiness</p>
-              <h2>실행 가능 여부</h2>
-            </div>
-            <span className="platform-chip">{environment?.platform ?? '...'}</span>
-          </div>
+        <div className="status-strip">
+          <span className={`status-pill-inline ${environment?.checks.codex.ok ? 'ok' : 'bad'}`}>
+            Codex {environment?.checks.codex.ok ? '준비됨' : '확인 필요'}
+          </span>
+          <span
+            className={`status-pill-inline ${
+              environment?.checks.chatgptLogin.ok ? 'ok' : 'bad'
+            }`}
+          >
+            로그인 {environment?.checks.chatgptLogin.ok ? '정상' : '필요'}
+          </span>
+          <span className={`status-pill-inline ${environment?.checks.ffmpeg.ok ? 'ok' : 'bad'}`}>
+            ffmpeg {environment?.checks.ffmpeg.ok ? '준비됨' : '확인 필요'}
+          </span>
+          <span
+            className={`status-pill-inline ${environment?.checks.ffprobe.ok ? 'ok' : 'bad'}`}
+          >
+            ffprobe {environment?.checks.ffprobe.ok ? '준비됨' : '확인 필요'}
+          </span>
+          <span className="status-pill-inline neutral">
+            상태 {isAnalyzing ? '분석 중' : '대기 중'}
+          </span>
+          <span className="status-pill-inline neutral">
+            선택 폴더 {formatFolderPath(selectedFolderPath, rootFolder)}
+          </span>
+        </div>
 
-          <div className="status-grid">
-            {environment && renderCheck('Codex CLI', environment.checks.codex)}
-            {environment &&
-              renderCheck('ChatGPT 로그인', environment.checks.chatgptLogin)}
-            {environment && renderCheck('ffmpeg', environment.checks.ffmpeg)}
-            {environment && renderCheck('ffprobe', environment.checks.ffprobe)}
+        <div className="progress-strip">
+          <div>
+            <p className="section-kicker">Progress</p>
+            <strong>{formatProgressStatus(displayProgress.status)}</strong>
+            <span>{statusMessage}</span>
           </div>
-        </article>
+          <div className="progress-metrics">
+            <span>전체 {displayProgress.totalFiles}개</span>
+            <span>재사용 {displayProgress.reusableFiles}개</span>
+            <span>신규 완료 {displayProgress.completedFiles}개</span>
+            <span>남음 {displayProgress.pendingFiles}개</span>
+            <span>{displayProgress.percent}%</span>
+          </div>
+          <div className="progress-bar" aria-hidden="true">
+            <div
+              className="progress-bar-fill"
+              style={{ width: `${Math.max(0, Math.min(100, displayProgress.percent))}%` }}
+            />
+          </div>
+        </div>
+
+        {errorMessage && <div className="error-banner">{errorMessage}</div>}
       </section>
 
-      <section className="workspace-grid">
-        <article className="panel folder-panel">
+      <section className="top-workspace">
+        <article className="panel analysis-panel">
           <div className="section-heading">
             <div>
-              <p className="section-kicker">Folders</p>
-              <h2>추가 분석할 폴더</h2>
-            </div>
-            <span className="count-chip">{folders.length}개</span>
-          </div>
-
-          <div className="folder-list">
-            {folders.map((folder) => (
-              <button
-                key={folder.path}
-                className={`folder-card ${
-                  folder.path === selectedFolderPath ? 'active' : ''
-                }`}
-                disabled={isAnalyzing}
-                onClick={() => {
-                  setSelectedFolderPath(folder.path)
-                }}
-              >
-                <strong>{folder.name}</strong>
-                <span>{folder.relativePath}</span>
-                <small>영상 {folder.videoCount}개</small>
-              </button>
-            ))}
-
-            {folders.length === 0 && (
-              <div className="empty-card">
-                기본 디렉토리를 선택하면 영상이 들어 있는 하위 폴더 목록이
-                여기에 표시됩니다.
-              </div>
-            )}
-          </div>
-        </article>
-
-        <article className="panel results-panel">
-          <div className="section-heading">
-            <div>
-              <p className="section-kicker">Results</p>
-              <h2>{rootFolder ? 'analyze 전체 결과' : '기본 디렉토리를 선택하세요'}</h2>
+              <p className="section-kicker">Analyze Library</p>
+              <h2>분석된 영상 리스트</h2>
               <p className="section-note">
-                {selectedFolder
-                  ? `추가 분석 대상: ${selectedFolder.relativePath} · 영상 ${selectedFolder.videoCount}개`
-                  : '왼쪽에서 추가 분석할 폴더를 고르세요.'}
+                analyze 폴더에서 읽은 영상 {analysis?.videos.length ?? 0}개
               </p>
             </div>
-
-            <div className="action-group">
-              <button
-                className="ghost-button"
-                onClick={() =>
-                  rootFolder &&
-                  window.codexVideoAnalyzer.showItemInFolder(rootFolder)
-                }
-                disabled={!rootFolder}
-              >
-                기본 폴더 열기
-              </button>
-              <button
-                className="ghost-button"
-                onClick={() =>
-                  analyzeFolderPath &&
-                  window.codexVideoAnalyzer.showItemInFolder(analyzeFolderPath)
-                }
-                disabled={!analyzeFolderPath}
-              >
-                analyze 열기
-              </button>
-              <button
-                className="ghost-button"
-                onClick={handleRefreshBaseFolder}
-                disabled={!rootFolder || isBusy || isAnalyzing}
-              >
-                새로고침
-              </button>
-              {isAnalyzing ? (
-                <button className="danger-button" onClick={handleCancel}>
-                  취소
-                </button>
-              ) : (
-                <button
-                  className="primary-button"
-                  onClick={handleAnalyze}
-                  disabled={!selectedFolder || isBusy}
-                >
-                  이 폴더 분석
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div className="progress-card">
-            <div className="progress-head">
-              <div>
-                <p className="section-kicker">Progress</p>
-                <strong>{formatProgressStatus(displayProgress.status)}</strong>
-              </div>
-              <strong className="progress-percent">{displayProgress.percent}%</strong>
-            </div>
-
-            <div className="progress-bar" aria-hidden="true">
-              <div
-                className="progress-bar-fill"
-                style={{ width: `${Math.max(0, Math.min(100, displayProgress.percent))}%` }}
-              />
-            </div>
-
-            <div className="progress-meta">
-              <span>전체 {displayProgress.totalFiles}개</span>
-              <span>재사용 {displayProgress.reusableFiles}개</span>
-              <span>신규 완료 {displayProgress.completedFiles}개</span>
-              <span>남음 {displayProgress.pendingFiles}개</span>
-            </div>
-
-            {(displayProgress.message || displayProgress.currentFile) && (
-              <p className="progress-copy">
-                {displayProgress.message || '진행 상황을 갱신하는 중입니다.'}
-                {displayProgress.currentFile
-                  ? ` · ${displayProgress.currentFile}`
-                  : ''}
-              </p>
-            )}
+            <span className="count-chip">{filteredAnalysisVideos.length}개 표시</span>
           </div>
 
           <div className="filter-row">
@@ -684,46 +709,15 @@ function App() {
               className="search-input"
               value={searchText}
               onChange={(event) => setSearchText(event.target.value)}
-              placeholder='예: "음식", "산책", "셀카"'
+              placeholder="제목, 요약, 태그, 파일명으로 검색"
             />
             <button className="ghost-button" onClick={() => setSearchText('')}>
-              지우기
+              검색 초기화
             </button>
           </div>
 
-          <div className="tag-row">
-            <button
-              className={`tag-chip ${!activeTag ? 'active' : ''}`}
-              onClick={() => setActiveTag('')}
-            >
-              전체
-            </button>
-            {tags.map(([tag, count]) => (
-              <button
-                key={tag}
-                className={`tag-chip ${activeTag === tag ? 'active' : ''}`}
-                onClick={() => setActiveTag(tag)}
-              >
-                {tag} · {count}
-              </button>
-            ))}
-          </div>
-
-          {analysis?.exists ? (
-            <div className="results-meta">
-              <span>생성 시각: {analysis.generatedAt || '-'}</span>
-              <span>저장된 분석: {analysis.videos.length}개</span>
-              <span>표시 결과: {filteredVideos.length}개</span>
-              <span>모델: {analysis.model}</span>
-            </div>
-          ) : (
-            <div className="results-meta muted">
-              기본 디렉토리의 analyze 폴더에 아직 분석 결과가 없습니다.
-            </div>
-          )}
-
-          <div className="video-list">
-            {filteredVideos.map((video) => (
+          <div className="video-list analysis-list">
+            {filteredAnalysisVideos.map((video) => (
               <button
                 key={video.absolutePath}
                 className={`video-card ${
@@ -731,18 +725,21 @@ function App() {
                 }`}
                 onClick={() => setSelectedVideoPath(video.absolutePath)}
               >
-                <VideoThumbnail video={video} />
+                <VideoThumbnail
+                  videoUrl={video.videoUrl}
+                  sampleImageUrl={video.sampleImageUrl}
+                  title={video.title}
+                />
+
                 <div className="video-card-body">
                   <div className="video-card-top">
                     <strong>{video.title}</strong>
-                    {video.skippedFromExisting && (
-                      <span className="reuse-badge">기존 분석 재사용</span>
-                    )}
+                    <span className="status-badge analyzed">분석됨</span>
                   </div>
                   <span>{video.relativePath}</span>
                   <p>{video.summary}</p>
                   <div className="pill-row">
-                    {video.categories.map((category) => (
+                    {video.categories.slice(0, 3).map((category) => (
                       <span key={`${video.absolutePath}-${category}`} className="mini-pill">
                         {category}
                       </span>
@@ -752,19 +749,28 @@ function App() {
               </button>
             ))}
 
-            {analysis?.exists && filteredVideos.length === 0 && (
-              <div className="empty-card">현재 검색 조건에 맞는 영상이 없습니다.</div>
+            {filteredAnalysisVideos.length === 0 && (
+              <div className="empty-card">
+                {analysis?.videos.length
+                  ? '검색 조건에 맞는 분석 결과가 없습니다.'
+                  : 'analyze 폴더에 읽을 수 있는 분석 결과가 아직 없습니다.'}
+              </div>
             )}
           </div>
         </article>
 
-        <article className="panel inspector-panel">
+        <article className="panel viewer-panel">
           <div className="section-heading">
             <div>
-              <p className="section-kicker">Preview</p>
-              <h2>{selectedVideo?.title ?? '영상 미리보기'}</h2>
+              <p className="section-kicker">Selected Video</p>
+              <h2>{selectedVideo?.title || selectedVideo?.fileName || '영상 정보'}</h2>
             </div>
             <div className="action-group">
+              {selectedVideo && (
+                <span className={`status-badge ${selectedVideoIsAnalyzed ? 'analyzed' : 'pending'}`}>
+                  {selectedVideoIsAnalyzed ? '분석됨' : '미분석'}
+                </span>
+              )}
               <button
                 className="ghost-button"
                 disabled={!selectedVideo}
@@ -785,85 +791,200 @@ function App() {
               >
                 외부 앱으로 열기
               </button>
+              <button
+                className="ghost-button"
+                disabled={!selectedAnalysisVideo}
+                onClick={() =>
+                  selectedAnalysisVideo &&
+                  window.codexVideoAnalyzer.openPath(selectedAnalysisVideo.analysisFilePath)
+                }
+              >
+                Markdown 열기
+              </button>
             </div>
           </div>
 
           {selectedVideo ? (
             <>
               <video
-                key={selectedVideo.videoUrl}
+                key={selectedAnalysisVideo?.videoUrl || selectedFolderVideo?.videoUrl || ''}
                 className="video-player"
-                src={selectedVideo.videoUrl}
+                src={selectedAnalysisVideo?.videoUrl || selectedFolderVideo?.videoUrl || ''}
                 controls
                 playsInline
                 preload="metadata"
               />
 
-              <div className="inspector-meta">
-                <span>{selectedVideo.relativePath}</span>
-                <span>
-                  길이 {selectedVideo.durationSeconds?.toFixed(1) ?? '-'}초
-                </span>
-                {selectedVideo.width && selectedVideo.height && (
-                  <span>
-                    해상도 {selectedVideo.width}×{selectedVideo.height}
-                  </span>
-                )}
-                {selectedVideo.fps && <span>FPS {selectedVideo.fps.toFixed(2)}</span>}
-                {selectedVideo.hasAudio != null && (
-                  <span>오디오 {selectedVideo.hasAudio ? '있음' : '없음'}</span>
-                )}
-              </div>
-
-              <p className="summary-copy">{selectedVideo.summary}</p>
-
-              <div className="detail-section">
-                <h3>세부 설명</h3>
-                <ul>
-                  {selectedVideo.details.map((detail) => (
-                    <li key={detail}>{detail}</li>
-                  ))}
-                </ul>
-              </div>
-
-              <div className="detail-section">
-                <h3>검색 키워드</h3>
-                <div className="pill-row">
-                  {[...selectedVideo.categories, ...selectedVideo.keywords].map((tag) => (
-                    <button
-                      key={`${selectedVideo.absolutePath}-${tag}`}
-                      className="mini-pill clickable"
-                      onClick={() => {
-                        setActiveTag(tag)
-                        setSearchText(tag)
-                      }}
-                    >
-                      {tag}
-                    </button>
-                  ))}
+              <div className="selected-meta-grid">
+                <div className="meta-card">
+                  <span>경로</span>
+                  <strong>{selectedAnalysisVideo?.relativePath || selectedFolderVideo?.relativePath}</strong>
+                </div>
+                <div className="meta-card">
+                  <span>길이</span>
+                  <strong>{formatDuration(selectedVideo.durationSeconds)}</strong>
+                </div>
+                <div className="meta-card">
+                  <span>해상도</span>
+                  <strong>{formatResolution(selectedVideo.width, selectedVideo.height)}</strong>
+                </div>
+                <div className="meta-card">
+                  <span>오디오</span>
+                  <strong>{selectedVideo.hasAudio == null ? '-' : selectedVideo.hasAudio ? '있음' : '없음'}</strong>
                 </div>
               </div>
 
-              <div className="detail-section markdown-section">
-                <div className="section-heading compact">
-                  <h3>분석 파일 원문</h3>
-                  <button
-                    className="ghost-button"
-                    onClick={() =>
-                      window.codexVideoAnalyzer.openPath(selectedVideo.analysisFilePath)
-                    }
-                  >
-                    Markdown 열기
-                  </button>
-                </div>
-                <pre>{selectedVideo.analysisMarkdown}</pre>
+              <div className="detail-block">
+                <p className="detail-label">요약</p>
+                <p className="summary-copy">
+                  {selectedVideoIsAnalyzed
+                    ? selectedAnalysisVideo?.summary
+                    : '이 영상은 아직 analyze 결과가 없습니다. 하단 폴더 영역에서 선택한 폴더를 분석하면 여기에서 요약과 태그를 볼 수 있습니다.'}
+                </p>
               </div>
+
+              {selectedAnalysisVideo ? (
+                <>
+                  <div className="detail-block">
+                    <p className="detail-label">세부 설명</p>
+                    <ul className="detail-list">
+                      {selectedAnalysisVideo.details.map((detail) => (
+                        <li key={detail}>{detail}</li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <div className="detail-block">
+                    <p className="detail-label">태그</p>
+                    <div className="pill-row">
+                      {[...selectedAnalysisVideo.categories, ...selectedAnalysisVideo.keywords].map(
+                        (tag) => (
+                          <button
+                            key={`${selectedAnalysisVideo.absolutePath}-${tag}`}
+                            className="mini-pill clickable"
+                            onClick={() => setSearchText(tag)}
+                          >
+                            {tag}
+                          </button>
+                        ),
+                      )}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="detail-block">
+                  <p className="detail-label">상태</p>
+                  <p className="summary-copy">
+                    선택한 파일명은 <strong>{selectedFolderVideo?.fileName}</strong>입니다. 현재는
+                    폴더 내 원본 영상만 불러온 상태입니다.
+                  </p>
+                </div>
+              )}
             </>
           ) : (
-            <div className="empty-card preview-empty">
-              왼쪽에서 분석 결과를 선택하면 여기서 바로 재생하고 확인할 수 있습니다.
+            <div className="empty-card viewer-empty">
+              상단 분석 리스트나 하단 폴더 영상 리스트에서 영상을 선택하면 여기에서 바로 재생됩니다.
             </div>
           )}
+        </article>
+      </section>
+
+      <section className="bottom-workspace">
+        <article className="panel tree-panel">
+          <div className="section-heading">
+            <div>
+              <p className="section-kicker">Folder Tree</p>
+              <h2>기본 폴더 하위 구조</h2>
+              <p className="section-note">
+                선택한 폴더의 직접 포함 영상만 오른쪽 목록에 표시됩니다.
+              </p>
+            </div>
+          </div>
+
+          {folderTree ? (
+            <div className="tree-panel-body">
+              <FolderTreeBranch
+                node={folderTree}
+                depth={0}
+                expandedPaths={expandedPathSet}
+                selectedPath={selectedFolderPath}
+                onToggle={handleToggleFolder}
+                onSelect={(folderPath) => void loadFolderVideosForPath(folderPath, false)}
+              />
+            </div>
+          ) : (
+            <div className="empty-card">기본 폴더를 선택하면 폴더 트리가 표시됩니다.</div>
+          )}
+        </article>
+
+        <article className="panel folder-videos-panel">
+          <div className="section-heading">
+            <div>
+              <p className="section-kicker">Folder Videos</p>
+              <h2>{formatFolderPath(selectedFolderPath, rootFolder)}</h2>
+              <p className="section-note">
+                영상 {folderVideos.length}개 · 분석됨 {analyzedFolderVideoCount}개 · 미분석{' '}
+                {pendingFolderVideoCount}개
+              </p>
+            </div>
+
+            <div className="action-group">
+              {isAnalyzing ? (
+                <button className="danger-button" onClick={handleCancel}>
+                  분석 취소
+                </button>
+              ) : (
+                <button
+                  className="primary-button"
+                  onClick={handleAnalyzeSelectedFolder}
+                  disabled={
+                    !selectedFolderPath ||
+                    isBusy ||
+                    (selectedFolderNode?.directVideoCount ?? folderVideos.length) === 0
+                  }
+                >
+                  선택 폴더 분석
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="video-list folder-video-list">
+            {folderVideos.map((video) => (
+              <button
+                key={video.absolutePath}
+                className={`video-card ${
+                  video.absolutePath === selectedVideoPath ? 'active' : ''
+                }`}
+                onClick={() => setSelectedVideoPath(video.absolutePath)}
+              >
+                <VideoThumbnail
+                  videoUrl={video.videoUrl}
+                  sampleImageUrl={video.sampleImageUrl}
+                  title={video.title}
+                />
+
+                <div className="video-card-body">
+                  <div className="video-card-top">
+                    <strong>{video.analyzed ? video.title : video.fileName}</strong>
+                    <span className={`status-badge ${video.analyzed ? 'analyzed' : 'pending'}`}>
+                      {video.analyzed ? '분석됨' : '미분석'}
+                    </span>
+                  </div>
+                  <span>{video.relativePath}</span>
+                  <p>
+                    {video.analyzed
+                      ? video.summary
+                      : '아직 analyze 결과가 없습니다. 폴더 분석을 실행하면 요약과 태그가 채워집니다.'}
+                  </p>
+                </div>
+              </button>
+            ))}
+
+            {folderVideos.length === 0 && (
+              <div className="empty-card">선택한 폴더에 직접 들어 있는 영상이 없습니다.</div>
+            )}
+          </div>
         </article>
       </section>
 
@@ -876,16 +997,107 @@ function App() {
           <span className="status-inline">{statusMessage}</span>
         </div>
 
-        {errorMessage && <div className="error-banner">{errorMessage}</div>}
-
         <pre className="console-output">
           {logLines.length > 0
             ? logLines.join('\n')
-            : '아직 실행 로그가 없습니다. 분석을 시작하면 Codex 출력이 여기에 표시됩니다.'}
+            : '아직 실행 로그가 없습니다. 폴더 분석을 시작하면 Codex 출력이 여기에 표시됩니다.'}
         </pre>
       </section>
     </main>
   )
+}
+
+function findTreeNode(node: FolderTreeNode, targetPath: string): FolderTreeNode | null {
+  if (node.path === targetPath) {
+    return node
+  }
+
+  for (const child of node.children) {
+    const match = findTreeNode(child, targetPath)
+    if (match) {
+      return match
+    }
+  }
+
+  return null
+}
+
+function findAncestorPaths(node: FolderTreeNode, targetPath: string): string[] {
+  if (node.path === targetPath) {
+    return [node.path]
+  }
+
+  for (const child of node.children) {
+    const childPaths = findAncestorPaths(child, targetPath)
+    if (childPaths.length > 0) {
+      return [node.path, ...childPaths]
+    }
+  }
+
+  return []
+}
+
+function pickFolderPath(tree: FolderTreeNode | null, preferredFolderPath: string): string {
+  if (!tree) {
+    return ''
+  }
+
+  if (!preferredFolderPath) {
+    return tree.path
+  }
+
+  return findTreeNode(tree, preferredFolderPath)?.path ?? tree.path
+}
+
+function mergeExpandedFolderPaths(
+  currentPaths: string[],
+  tree: FolderTreeNode | null,
+  selectedFolderPath: string,
+): string[] {
+  if (!tree) {
+    return []
+  }
+
+  const next = new Set(currentPaths)
+  for (const path of findAncestorPaths(tree, selectedFolderPath || tree.path)) {
+    next.add(path)
+  }
+  next.add(tree.path)
+  return [...next]
+}
+
+function pickSelectedVideoPath(
+  currentPath: string,
+  analysisVideos: AnalysisVideo[],
+  folderVideos: FolderVideoItem[],
+  preserveSelectedVideo: boolean,
+) {
+  if (
+    preserveSelectedVideo &&
+    currentPath &&
+    (analysisVideos.some((video) => video.absolutePath === currentPath) ||
+      folderVideos.some((video) => video.absolutePath === currentPath))
+  ) {
+    return currentPath
+  }
+
+  return folderVideos[0]?.absolutePath ?? analysisVideos[0]?.absolutePath ?? ''
+}
+
+function formatFolderPath(folderPath: string, rootFolder: string) {
+  if (!folderPath) {
+    return '폴더를 선택하세요'
+  }
+
+  if (!rootFolder || folderPath === rootFolder) {
+    return '기본 폴더'
+  }
+
+  const relativePath = folderPath.startsWith(rootFolder)
+    ? folderPath.slice(rootFolder.length).replace(/^[\\/]+/, '')
+    : folderPath
+
+  return relativePath || '기본 폴더'
 }
 
 function formatProgressStatus(status: string) {
@@ -893,7 +1105,7 @@ function formatProgressStatus(status: string) {
     case 'running':
       return '분석 진행 중'
     case 'completed':
-      return '완료'
+      return '분석 완료'
     case 'failed':
       return '실패'
     case 'cancelled':
@@ -901,6 +1113,22 @@ function formatProgressStatus(status: string) {
     default:
       return '대기 중'
   }
+}
+
+function formatDuration(durationSeconds?: number) {
+  if (durationSeconds == null) {
+    return '-'
+  }
+
+  return `${durationSeconds.toFixed(1)}초`
+}
+
+function formatResolution(width?: number, height?: number) {
+  if (!width || !height) {
+    return '-'
+  }
+
+  return `${width}×${height}`
 }
 
 function getFallbackSettings(): ToolSettings {

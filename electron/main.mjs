@@ -5,11 +5,15 @@ import path from 'node:path'
 import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 import {
+  collectFolderTree,
   collectVideoFolders,
   fileExists,
   getAnalyzePaths,
+  getFolderRelativePath,
   getProjectRootPath,
+  getProjectRelativeVideoPath,
   isSameOrChildPath,
+  listDirectVideoFiles,
   readJsonIfExists,
   readTextIfExists,
   toPosixPath,
@@ -178,10 +182,19 @@ function buildFileUrl(filePath, cacheKey = '') {
   return url.href
 }
 
-async function buildAnalysisVideo(projectRootPath, analyzeDir, entry) {
-  const absoluteVideoPath = path.join(projectRootPath, entry.record.source)
+function resolveSampleImagePath(analyzeDir, sampleImage) {
+  if (!sampleImage) {
+    return ''
+  }
+
+  return path.isAbsolute(sampleImage)
+    ? sampleImage
+    : path.join(analyzeDir, sampleImage)
+}
+
+async function buildMediaAssetInfo(absoluteVideoPath, sampleImagePath = '') {
   let videoUrl = buildFileUrl(absoluteVideoPath)
-  let sampleImagePath = ''
+  let resolvedSampleImagePath = ''
   let sampleImageUrl = ''
 
   try {
@@ -191,16 +204,25 @@ async function buildAnalysisVideo(projectRootPath, analyzeDir, entry) {
     // Keep a bare URL if the source video is currently missing.
   }
 
-  if (entry.record.sampleImage) {
-    const resolvedSamplePath = path.isAbsolute(entry.record.sampleImage)
-      ? entry.record.sampleImage
-      : path.join(analyzeDir, entry.record.sampleImage)
-    if (await fileExists(resolvedSamplePath)) {
-      const stat = await fs.stat(resolvedSamplePath)
-      sampleImagePath = resolvedSamplePath
-      sampleImageUrl = buildFileUrl(resolvedSamplePath, String(Math.floor(stat.mtimeMs)))
-    }
+  if (sampleImagePath && (await fileExists(sampleImagePath))) {
+    const sampleStat = await fs.stat(sampleImagePath)
+    resolvedSampleImagePath = sampleImagePath
+    sampleImageUrl = buildFileUrl(sampleImagePath, String(Math.floor(sampleStat.mtimeMs)))
   }
+
+  return {
+    videoUrl,
+    sampleImagePath: resolvedSampleImagePath,
+    sampleImageUrl,
+  }
+}
+
+async function buildAnalysisVideo(projectRootPath, analyzeDir, entry) {
+  const absoluteVideoPath = path.join(projectRootPath, entry.record.source)
+  const { videoUrl, sampleImagePath, sampleImageUrl } = await buildMediaAssetInfo(
+    absoluteVideoPath,
+    resolveSampleImagePath(analyzeDir, entry.record.sampleImage),
+  )
 
   return {
     fileName: entry.record.fileName,
@@ -229,6 +251,59 @@ async function buildAnalysisVideo(projectRootPath, analyzeDir, entry) {
     model: entry.record.model || FIXED_MODEL,
     reasoningEffort: entry.record.reasoningEffort || FIXED_REASONING,
   }
+}
+
+async function loadFolderTree(projectRootPath) {
+  if (!projectRootPath) {
+    return null
+  }
+
+  return collectFolderTree(projectRootPath)
+}
+
+async function loadFolderVideos(projectRootPath, folderPath) {
+  if (!projectRootPath || !folderPath) {
+    return []
+  }
+
+  const { analyzeDir } = getAnalyzePaths(projectRootPath)
+  const { entries } = await readLibraryEntries(projectRootPath)
+  const analysisBySource = new Map(entries.map((entry) => [entry.record.source, entry]))
+  const folderRelativePath = getFolderRelativePath(projectRootPath, folderPath)
+  const directVideoFiles = await listDirectVideoFiles(folderPath)
+
+  return Promise.all(
+    directVideoFiles.map(async (fileName) => {
+      const source = getProjectRelativeVideoPath(projectRootPath, folderPath, fileName)
+      const absolutePath = path.join(folderPath, fileName)
+      const entry = analysisBySource.get(source)
+      const { videoUrl, sampleImagePath, sampleImageUrl } = await buildMediaAssetInfo(
+        absolutePath,
+        entry ? resolveSampleImagePath(analyzeDir, entry.record.sampleImage) : '',
+      )
+
+      return {
+        fileName,
+        source,
+        relativePath: source,
+        folderRelativePath,
+        absolutePath,
+        videoUrl,
+        sampleImagePath,
+        sampleImageUrl,
+        analyzed: Boolean(entry),
+        title: entry?.record.title || fileName,
+        summary: entry?.record.summary || '',
+        generatedAt: entry?.record.generatedAt || '',
+        durationSeconds: entry?.record.durationSeconds ?? undefined,
+        width: entry?.record.width ?? undefined,
+        height: entry?.record.height ?? undefined,
+        fps: entry?.record.fps ?? undefined,
+        hasAudio: entry?.record.hasAudio ?? undefined,
+        analysisFilePath: entry?.markdownPath || '',
+      }
+    }),
+  )
 }
 
 async function loadAnalysis(projectRootPath) {
@@ -741,6 +816,10 @@ ipcMain.handle('dialog:pick-root-folder', async () => {
   return result.canceled || result.filePaths.length === 0 ? '' : result.filePaths[0]
 })
 ipcMain.handle('folders:scan', async (_event, rootPath) => (rootPath ? collectVideoFolders(rootPath) : []))
+ipcMain.handle('folders:tree', async (_event, rootPath) => loadFolderTree(rootPath))
+ipcMain.handle('folders:videos', async (_event, rootPath, folderPath) =>
+  loadFolderVideos(rootPath, folderPath),
+)
 ipcMain.handle('analysis:load', async (_event, folderPath) => loadAnalysis(folderPath))
 ipcMain.handle('analysis:load-progress', async (_event, folderPath) => loadAnalysisProgress(folderPath))
 ipcMain.handle('analysis:start', async (_event, folderPath) => startAnalysis(folderPath))

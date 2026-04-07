@@ -31,6 +31,36 @@ export interface FolderItem {
   videoCount: number
 }
 
+export interface FolderTreeNode {
+  name: string
+  path: string
+  relativePath: string
+  directVideoCount: number
+  totalVideoCount: number
+  children: FolderTreeNode[]
+}
+
+export interface FolderVideoItem {
+  fileName: string
+  source: string
+  relativePath: string
+  folderRelativePath: string
+  absolutePath: string
+  videoUrl: string
+  sampleImagePath: string
+  sampleImageUrl: string
+  analyzed: boolean
+  title: string
+  summary: string
+  generatedAt?: string
+  durationSeconds?: number
+  width?: number
+  height?: number
+  fps?: number
+  hasAudio?: boolean
+  analysisFilePath?: string
+}
+
 export interface AnalysisVideo {
   fileName: string
   relativePath: string
@@ -127,6 +157,8 @@ export interface CodexVideoAnalyzerApi {
   getEnvironmentStatus: () => Promise<EnvironmentStatus>
   pickRootFolder: () => Promise<string>
   scanFolders: (rootPath: string) => Promise<FolderItem[]>
+  loadFolderTree: (rootPath: string) => Promise<FolderTreeNode | null>
+  loadFolderVideos: (rootPath: string, folderPath: string) => Promise<FolderVideoItem[]>
   loadAnalysis: (folderPath: string) => Promise<AnalysisData>
   loadAnalysisProgress: (folderPath: string) => Promise<AnalysisProgress>
   startAnalysis: (folderPath: string) => Promise<{ ok: boolean }>
