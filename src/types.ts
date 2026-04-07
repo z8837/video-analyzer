@@ -1,0 +1,138 @@
+export interface ToolSettings {
+  codexCommand: string
+  ffmpegCommand: string
+  lastRootPath: string
+}
+
+export interface CommandCheck {
+  command: string
+  ok: boolean
+  detail: string
+}
+
+export interface EnvironmentStatus {
+  platform: string
+  model: string
+  reasoningEffort: string
+  instructionsPath: string
+  settings: ToolSettings
+  checks: {
+    codex: CommandCheck
+    chatgptLogin: CommandCheck
+    ffmpeg: CommandCheck
+    ffprobe: CommandCheck
+  }
+}
+
+export interface FolderItem {
+  name: string
+  path: string
+  relativePath: string
+  videoCount: number
+}
+
+export interface AnalysisVideo {
+  fileName: string
+  relativePath: string
+  folderRelativePath?: string
+  durationSeconds?: number
+  width?: number
+  height?: number
+  fps?: number
+  hasAudio?: boolean
+  title: string
+  summary: string
+  details: string[]
+  categories: string[]
+  keywords: string[]
+  sampleImage?: string
+  analysisFile?: string
+  skippedFromExisting?: boolean
+  absolutePath: string
+  videoUrl: string
+  analysisFilePath: string
+  analysisMarkdown: string
+  sampleImagePath: string
+  sampleImageUrl: string
+  generatedAt?: string
+  model?: string
+  reasoningEffort?: string
+}
+
+export interface AnalysisData {
+  exists: boolean
+  folderPath: string
+  directVideoCount: number
+  generatedAt?: string
+  model?: string
+  reasoningEffort?: string
+  schemaVersion?: number
+  videos: AnalysisVideo[]
+}
+
+export interface AnalysisProgress {
+  exists: boolean
+  folderPath: string
+  status: string
+  totalFiles: number
+  reusableFiles: number
+  completedFiles: number
+  pendingFiles: number
+  percent: number
+  currentFile: string
+  message: string
+  updatedAt: string
+}
+
+export type AnalysisEvent =
+  | {
+      type: 'started'
+      folderPath: string
+      model: string
+      reasoningEffort: string
+    }
+  | {
+      type: 'log'
+      stream: 'stdout' | 'stderr'
+      message: string
+    }
+  | {
+      type: 'completed'
+      folderPath: string
+      code: number
+      finalMessage: string
+      analysis: AnalysisData
+    }
+  | {
+      type: 'failed'
+      folderPath: string
+      code: number | null
+      error: string
+      finalMessage: string
+    }
+  | {
+      type: 'cancelled'
+      folderPath: string
+    }
+
+export type AppEvent = {
+  type: 'base-folder-selected'
+  rootPath: string
+  settings: ToolSettings
+}
+
+export interface CodexVideoAnalyzerApi {
+  getSettings: () => Promise<ToolSettings>
+  saveSettings: (patch: Partial<ToolSettings>) => Promise<ToolSettings>
+  getEnvironmentStatus: () => Promise<EnvironmentStatus>
+  pickRootFolder: () => Promise<string>
+  scanFolders: (rootPath: string) => Promise<FolderItem[]>
+  loadAnalysis: (folderPath: string) => Promise<AnalysisData>
+  loadAnalysisProgress: (folderPath: string) => Promise<AnalysisProgress>
+  startAnalysis: (folderPath: string) => Promise<{ ok: boolean }>
+  cancelAnalysis: () => Promise<{ ok: boolean }>
+  showItemInFolder: (targetPath: string) => Promise<boolean>
+  openPath: (targetPath: string) => Promise<string>
+  onAppEvent: (listener: (payload: AppEvent) => void) => () => void
+  onAnalysisEvent: (listener: (payload: AnalysisEvent) => void) => () => void
+}

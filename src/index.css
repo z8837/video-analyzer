@@ -1,0 +1,39 @@
+:root {
+  font-family: 'Aptos', 'Segoe UI Variable', 'SF Pro Text', sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #201912;
+  background:
+    radial-gradient(circle at top left, rgba(246, 221, 172, 0.54), transparent 30%),
+    radial-gradient(circle at top right, rgba(91, 143, 150, 0.18), transparent 18%),
+    linear-gradient(180deg, #f6efe3 0%, #ece2d3 100%);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+body {
+  margin: 0;
+}
+
+button:disabled,
+input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+#root {
+  padding: 22px;
+}

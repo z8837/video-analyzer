@@ -1,0 +1,218 @@
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
+import {
+  extractJsonFence,
+  fileExists,
+  getAnalyzeAssetRelativePaths,
+  getAnalyzePaths,
+  getFolderRelativePath,
+  getProjectRelativeVideoPath,
+  listDirectVideoFiles,
+  normalizeAnalysisRecord,
+  parseLegacyMarkdown,
+  readJsonIfExists,
+  readTextIfExists,
+  toPosixPath,
+  writeJson,
+  writeText,
+  buildMarkdownFromRecord,
+} from './library-data.mjs'
+
+async function collectMarkdownFiles(folderPath) {
+  if (!(await fileExists(folderPath))) {
+    return []
+  }
+
+  const collected = []
+
+  async function visit(currentPath) {
+    const entries = await fs.readdir(currentPath, { withFileTypes: true })
+    const sortedEntries = entries.sort((left, right) => left.name.localeCompare(right.name))
+
+    for (const entry of sortedEntries) {
+      const entryPath = path.join(currentPath, entry.name)
+      if (entry.isDirectory() && !entry.isSymbolicLink()) {
+        await visit(entryPath)
+        continue
+      }
+
+      if (entry.isFile() && entry.name.toLowerCase().endsWith('.md')) {
+        collected.push(entryPath)
+      }
+    }
+  }
+
+  await visit(folderPath)
+  return collected.sort((left, right) => left.localeCompare(right))
+}
+
+export async function migrateLegacyResultsToMarkdown(projectRootPath) {
+  const { analyzeDir, legacyResultsPath } = getAnalyzePaths(projectRootPath)
+  const legacyResults = await readJsonIfExists(legacyResultsPath)
+
+  if (!legacyResults?.videos?.length) {
+    return
+  }
+
+  for (const legacyVideo of legacyResults.videos) {
+    const source = toPosixPath(
+      legacyVideo.projectRelativePath || legacyVideo.relativePath || legacyVideo.fileName || '',
+    )
+    if (!source) {
+      continue
+    }
+
+    const folderRelativePath =
+      path.posix.dirname(source) === '.' ? '.' : path.posix.dirname(source)
+    const targetRelativePath = getAnalyzeAssetRelativePaths(folderRelativePath, source).analysisFile
+    const targetPath = path.join(analyzeDir, targetRelativePath)
+
+    if (await fileExists(targetPath)) {
+      continue
+    }
+
+    const record = normalizeAnalysisRecord(legacyVideo, {
+      generatedAt: legacyResults.generatedAt || '',
+      model: legacyResults.model || 'gpt-5.4',
+      reasoningEffort: legacyResults.reasoningEffort || 'xhigh',
+    })
+    if (!record) {
+      continue
+    }
+
+    const sampleImage =
+      typeof legacyVideo.sampleImage === 'string' && legacyVideo.sampleImage.trim()
+        ? toPosixPath(legacyVideo.sampleImage.trim())
+        : ''
+    if (sampleImage && (await fileExists(path.join(analyzeDir, sampleImage)))) {
+      record.sampleImage = sampleImage
+    }
+
+    await writeText(targetPath, buildMarkdownFromRecord(record))
+  }
+}
+
+export async function readLibraryEntries(projectRootPath) {
+  await migrateLegacyResultsToMarkdown(projectRootPath)
+
+  const { analyzeDir } = getAnalyzePaths(projectRootPath)
+  const markdownPaths = await collectMarkdownFiles(analyzeDir)
+  const bySource = new Map()
+  let newestTimestamp = 0
+
+  for (const markdownPath of markdownPaths) {
+    const [markdown, stat] = await Promise.all([
+      readTextIfExists(markdownPath),
+      fs.stat(markdownPath),
+    ])
+    const jsonBlock = extractJsonFence(markdown)
+
+    try {
+      const parsed = jsonBlock ? JSON.parse(jsonBlock) : parseLegacyMarkdown(markdown)
+      const record = normalizeAnalysisRecord(parsed)
+      if (!record) {
+        continue
+      }
+
+      newestTimestamp = Math.max(newestTimestamp, stat.mtimeMs)
+      const existing = bySource.get(record.source)
+      if (!existing || stat.mtimeMs >= existing.mtimeMs) {
+        bySource.set(record.source, {
+          record,
+          markdownPath,
+          markdown,
+          mtimeMs: stat.mtimeMs,
+        })
+      }
+    } catch {
+      // Ignore invalid partial files.
+    }
+  }
+
+  return {
+    entries: [...bySource.values()].sort((left, right) =>
+      left.record.source.localeCompare(right.record.source, 'ko'),
+    ),
+    generatedAt: newestTimestamp > 0 ? new Date(newestTimestamp).toISOString() : '',
+  }
+}
+
+export async function getResumeContext(projectRootPath, sourceFolderPath) {
+  const { entries } = await readLibraryEntries(projectRootPath)
+  const existingByPath = new Map(entries.map((entry) => [entry.record.source, entry]))
+  const directVideoFiles = await listDirectVideoFiles(sourceFolderPath)
+  const folderRelativePath = getFolderRelativePath(projectRootPath, sourceFolderPath)
+  const reusableEntries = []
+  const pendingVideos = []
+
+  for (const fileName of directVideoFiles) {
+    const source = getProjectRelativeVideoPath(projectRootPath, sourceFolderPath, fileName)
+    const existing = existingByPath.get(source)
+    if (existing) {
+      reusableEntries.push(existing)
+      continue
+    }
+
+    pendingVideos.push({
+      fileName,
+      source,
+      folderRelativePath,
+      outputMarkdown: path.posix.join(
+        'analyze',
+        getAnalyzeAssetRelativePaths(folderRelativePath, source).analysisFile,
+      ),
+    })
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    projectRootPath,
+    sourceFolderPath,
+    folderRelativePath,
+    directVideoFiles,
+    totalFiles: directVideoFiles.length,
+    reusableCount: reusableEntries.length,
+    pendingCount: pendingVideos.length,
+    reusableEntries,
+    pendingVideos,
+  }
+}
+
+export async function writeTaskFile(projectRootPath, resumeContext) {
+  const { taskPath } = getAnalyzePaths(projectRootPath)
+  await writeJson(taskPath, {
+    schemaVersion: 1,
+    generatedAt: resumeContext.generatedAt,
+    projectRootPath,
+    sourceFolderPath: resumeContext.sourceFolderPath,
+    sourceFolderRelativePath: resumeContext.folderRelativePath,
+    totalFiles: resumeContext.totalFiles,
+    reusableCount: resumeContext.reusableCount,
+    pendingCount: resumeContext.pendingCount,
+    pendingVideos: resumeContext.pendingVideos,
+  })
+}
+
+export async function getCompletedPendingSources(projectRootPath, pendingVideos) {
+  const completedSources = new Set()
+
+  for (const pendingVideo of pendingVideos) {
+    const markdownPath = path.join(projectRootPath, pendingVideo.outputMarkdown)
+    const markdown = await readTextIfExists(markdownPath)
+    if (!markdown) {
+      continue
+    }
+
+    try {
+      const parsed = JSON.parse(extractJsonFence(markdown))
+      const record = normalizeAnalysisRecord(parsed)
+      if (record?.source === pendingVideo.source) {
+        completedSources.add(pendingVideo.source)
+      }
+    } catch {
+      // Ignore incomplete files until they are valid.
+    }
+  }
+
+  return completedSources
+}

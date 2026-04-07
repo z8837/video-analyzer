@@ -1,0 +1,59 @@
+# macOS Build
+
+This project can generate a macOS desktop package, but the actual macOS build must run on a Mac.
+
+## What to copy to the Mac
+
+Copy the whole `codex-video-analyzer` project folder.
+
+## Requirements on the Mac
+
+1. Node.js 24+
+2. Codex CLI
+3. ffmpeg and ffprobe
+4. `codex login`
+
+Examples for Apple Silicon:
+
+```bash
+brew install node ffmpeg
+npm install -g @openai/codex
+codex login
+```
+
+## Build commands
+
+Universal macOS build:
+
+```bash
+npm install
+npm run dist:mac
+```
+
+Apple Silicon only:
+
+```bash
+npm install
+npm run dist:mac:arm64
+```
+
+Finder double-click helper:
+
+```bash
+./scripts/build-macos.command
+```
+
+## Output
+
+Artifacts are written to the `release/` folder.
+
+Typical outputs:
+
+- `Codex Video Analyzer-0.1.0-mac-universal.dmg`
+- `Codex Video Analyzer-0.1.0-mac-universal.zip`
+
+## Notes
+
+- This app uses local Codex CLI with `gpt-5.4` and reasoning effort `xhigh`.
+- With ChatGPT login based Codex CLI, a snapshot model like `gpt-5.4-2026-03-05` cannot be pinned.
+- Finder-launched apps on macOS may not inherit shell `PATH`. If Codex or ffmpeg is not detected, enter their absolute paths in the app settings.
