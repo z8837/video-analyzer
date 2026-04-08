@@ -23,7 +23,7 @@ codex login
 
 ## Build commands
 
-Universal macOS build:
+Current Mac architecture:
 
 ```bash
 npm install
@@ -35,6 +35,13 @@ Apple Silicon only:
 ```bash
 npm install
 npm run dist:mac:arm64
+```
+
+Universal build:
+
+```bash
+npm install
+npm run dist:mac:universal
 ```
 
 Finder double-click helper:
@@ -49,6 +56,8 @@ Artifacts are written to the `release/` folder.
 
 Typical outputs:
 
+- `Codex Video Analyzer-0.1.0-mac-arm64.dmg`
+- `Codex Video Analyzer-0.1.0-mac-arm64.zip`
 - `Codex Video Analyzer-0.1.0-mac-universal.dmg`
 - `Codex Video Analyzer-0.1.0-mac-universal.zip`
 
@@ -56,4 +65,5 @@ Typical outputs:
 
 - This app uses local Codex CLI with `gpt-5.4` and reasoning effort `xhigh`.
 - With ChatGPT login based Codex CLI, a snapshot model like `gpt-5.4-2026-03-05` cannot be pinned.
+- Native-host mac builds reuse the local Electron bundle from `node_modules/electron/dist`, so `npm run dist:mac` can package without re-downloading Electron.
 - Finder-launched apps on macOS may not inherit shell `PATH`. If Codex or ffmpeg is not detected, enter their absolute paths in the app settings.

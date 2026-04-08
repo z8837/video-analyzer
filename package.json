@@ -13,9 +13,10 @@
     "build": "tsc -b && vite build",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win nsis",
-    "dist:mac": "npm run build && electron-builder --mac dmg zip --universal",
-    "dist:mac:arm64": "npm run build && electron-builder --mac dmg zip --arm64",
-    "dist:mac:dir": "npm run build && electron-builder --mac dir --universal",
+    "dist:mac": "npm run build && ELECTRON_BUILDER_CACHE=./.cache/electron-builder electron-builder --mac dmg zip",
+    "dist:mac:arm64": "npm run build && ELECTRON_BUILDER_CACHE=./.cache/electron-builder electron-builder --mac dmg zip --arm64",
+    "dist:mac:universal": "npm run build && ELECTRON_BUILDER_CACHE=./.cache/electron-builder electron-builder --mac dmg zip --universal",
+    "dist:mac:dir": "npm run build && ELECTRON_BUILDER_CACHE=./.cache/electron-builder electron-builder --mac dir",
     "lint": "eslint .",
     "preview": "vite preview"
   },
@@ -37,6 +38,7 @@
       "buildResources": "build",
       "output": "release"
     },
+    "electronDist": "node_modules/electron/dist",
     "mac": {
       "target": [
         "dmg",

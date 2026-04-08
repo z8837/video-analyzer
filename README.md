@@ -52,8 +52,9 @@ npm run dist:mac
 주의:
 - Windows 설치 파일은 Windows에서 빌드하는 것이 가장 안전합니다.
 - macOS DMG는 macOS에서 빌드해야 합니다.
-- 범용 macOS 패키지는 `npm run dist:mac`으로 빌드합니다.
+- `npm run dist:mac`은 현재 Mac 아키텍처용 설치 패키지(`.dmg`, `.zip`)를 만듭니다.
 - Apple Silicon 전용 패키지는 `npm run dist:mac:arm64`를 사용합니다.
+- 범용 패키지가 필요하면 `npm run dist:mac:universal`을 사용합니다.
 - 자세한 절차는 `MACOS-BUILD.md`를 참고하세요.
 
 ## 사용 방법
