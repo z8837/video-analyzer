@@ -592,7 +592,7 @@ async function writeProgressFile(folderPath, progressPatch) {
   const activeWorkTotal = completedFiles + pendingFiles
   const computedPercent =
     activeWorkTotal > 0
-      ? Math.min(99, Math.round((completedFiles / activeWorkTotal) * 100))
+      ? Math.round((completedFiles / activeWorkTotal) * 100)
       : progressPatch.status === 'completed'
         ? 100
         : 0
@@ -1242,7 +1242,6 @@ async function pumpAnalysisQueue(runState) {
           spawnError: '',
           closed: false,
           streamLogQueue: Promise.resolve(),
-          startedAt: Date.now(),
         }
 
         try {
@@ -1271,37 +1270,15 @@ async function pumpAnalysisQueue(runState) {
   }
 }
 
-const ESTIMATED_WORKER_DURATION_MS = 60_000
-
-function estimateActiveWorkerProgress(runState) {
-  const now = Date.now()
-  let inProgressFraction = 0
-
-  for (const workerState of runState.workers.values()) {
-    const elapsed = now - workerState.startedAt
-    const ratio = Math.min(elapsed / ESTIMATED_WORKER_DURATION_MS, 0.95)
-    inProgressFraction += ratio
-  }
-
-  return inProgressFraction
-}
-
 async function refreshActiveRunProgress(runState) {
   const completedSources = await getCompletedPendingSources(
     runState.folderPath,
     runState.resumeContext.pendingVideos,
   )
   const completedFiles = completedSources.size
-  const pendingFiles = Math.max(runState.resumeContext.pendingCount - completedFiles, 0)
   const totalPending = runState.resumeContext.pendingCount
-
-  let percent
-  if (totalPending > 0) {
-    const inProgressFraction = estimateActiveWorkerProgress(runState)
-    percent = Math.min(99, Math.round(((completedFiles + inProgressFraction) / totalPending) * 100))
-  } else {
-    percent = 100
-  }
+  const pendingFiles = Math.max(totalPending - completedFiles, 0)
+  const percent = totalPending > 0 ? Math.round((completedFiles / totalPending) * 100) : 100
 
   const nextPending = runState.resumeContext.pendingVideos.find(
     (video) => !completedSources.has(video.source),
