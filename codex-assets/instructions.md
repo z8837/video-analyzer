@@ -7,13 +7,13 @@ Role:
 - Write Markdown files in UTF-8.
 
 Input model:
-- The prompt tells you the current working directory and selected source folder.
-- `analyze/_task.json` is the single source of truth for this run.
+- The prompt tells you the current working directory, selected source folder, and exact task file path for this worker.
+- The task file path given in the prompt is the single source of truth for this worker.
 
 Scope:
-- Analyze only the pending videos listed in `analyze/_task.json`.
+- Analyze only the pending videos listed in the task file from the prompt.
 - Ignore videos that are not listed there.
-- Ignore videos in subfolders unless they are explicitly listed in `analyze/_task.json`.
+- Ignore videos in subfolders unless they are explicitly listed in that task file.
 - Supported extensions are `.mp4`, `.mov`, `.mkv`, `.avi`, `.webm`, `.m4v`, `.wmv`.
 - Do not inspect unrelated repo files, docs, build outputs, or source code.
 
@@ -25,11 +25,25 @@ Permanent outputs:
 - Do not create preview videos.
 - Do not leave permanent sample-sheet images or temporary helper files unless the user explicitly asked for them.
 
+Pre-extracted metadata:
+- The task file already contains `metadata` for each pending video with `durationSeconds`, `width`, `height`, `fps`, and `hasAudio`.
+- Do NOT run `ffprobe` yourself. Use the provided metadata directly.
+
 Allowed temporary work:
-- You may use `ffprobe` to read duration, resolution, frame rate, and audio presence.
-- You may use `ffmpeg` to extract temporary frames for visual inspection if needed.
+- You may use `ffmpeg` to extract a small number of temporary frames for visual inspection if needed.
+- Prefer 2–4 representative frames per video, scaled down (e.g. `-vf scale=540:-1`).
 - If you create temporary files for inspection, keep them outside the permanent library when possible and clean them up before finishing.
-- Prefer a small number of representative frames per video.
+
+Forbidden tools and approaches:
+- Do NOT use Swift, `osascript`, JXA (JavaScript for Automation), or Apple Vision framework.
+- Do NOT try to run local ML models (ollama, llava, llama.cpp, or similar).
+- Do NOT use `sips`, `qlmanage`, or any macOS-specific image inspection tools.
+- Do NOT write helper scripts in Swift, Objective-C, or JXA to analyze frames.
+- Do NOT search for or probe locally installed AI tools.
+- Do NOT use Python image analysis libraries (cv2, OpenCV, PIL, Pillow, numpy, scikit-image) to analyze frames.
+- Do NOT perform programmatic image analysis: no face detection, edge detection, color histograms, Hough transforms, ASCII art conversion, or any computer-vision processing.
+- After extracting frames with `ffmpeg`, simply describe what you see in the images. Do not write code to interpret them.
+- Limit yourself to at most 2 shell commands per video: one `ffmpeg` call to extract frames, then produce your JSON response.
 - Do not spend time on broad repository searches or environment exploration once the task file is understood.
 
 Markdown format:
@@ -61,7 +75,7 @@ Required JSON fields:
   "sampleImage": "",
   "generatedAt": "2026-04-07T12:34:56+09:00",
   "model": "gpt-5.4",
-  "reasoningEffort": "xhigh"
+  "reasoningEffort": "high"
 }
 ```
 
@@ -77,7 +91,7 @@ Field rules:
 - `sampleImage`: use an empty string unless a permanent sample image was explicitly requested.
 - `generatedAt`: current timestamp in ISO 8601 format.
 - `model`: always `gpt-5.4`.
-- `reasoningEffort`: always `xhigh`.
+- `reasoningEffort`: always `high`.
 
 Windows UTF-8 rules:
 - Keep Korean text out of PowerShell command strings, here-strings, and console output when possible.
@@ -92,10 +106,10 @@ Accuracy rules:
 - Do not fabricate details that are not supported by the frames or metadata.
 
 Workflow:
-1. Read `analyze/_task.json`.
+1. Read the task file path provided in the prompt.
 2. For each pending video:
-   - inspect metadata,
-   - inspect only a few representative frames if needed,
+   - use the pre-extracted `metadata` from the task file for durationSeconds, width, height, fps, hasAudio,
+   - extract only a few representative frames with `ffmpeg` if needed for visual description,
    - prepare one analysis object for the final JSON response.
 3. Do not rewrite unrelated existing markdown files.
 4. Do not save the final analysis text through shell-written files.
@@ -128,7 +142,7 @@ Final response:
       "sampleImage": "",
       "generatedAt": "2026-04-07T12:34:56+09:00",
       "model": "gpt-5.4",
-      "reasoningEffort": "xhigh"
+      "reasoningEffort": "high"
     }
   ]
 }

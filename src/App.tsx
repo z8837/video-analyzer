@@ -212,6 +212,7 @@ function App() {
 
   const selectedVideo = selectedAnalysisVideo ?? selectedFolderVideo
   const selectedVideoIsAnalyzed = Boolean(selectedAnalysisVideo || selectedFolderVideo?.analyzed)
+  const analysisPrerequisitesReady = areAnalysisPrerequisitesReady(environment)
 
   const analyzedFolderVideoCount = folderVideos.filter((video) => video.analyzed).length
   const pendingFolderVideoCount = Math.max(folderVideos.length - analyzedFolderVideoCount, 0)
@@ -484,16 +485,17 @@ function App() {
   const handleRefreshEnvironment = async () => {
     setIsBusy(true)
     setErrorMessage('')
+    setStatusMessage('도구 경로를 저장하고 필요한 구성요소를 준비하는 중입니다.')
 
     try {
       const nextSettings = draftSettings ?? settings ?? getFallbackSettings()
-      const saved = await window.codexVideoAnalyzer.saveSettings(nextSettings)
-      const refreshedEnvironment = await window.codexVideoAnalyzer.getEnvironmentStatus()
+      const prepared = await window.codexVideoAnalyzer.prepareEnvironment(nextSettings)
 
-      setSettings(saved)
-      setDraftSettings(saved)
-      setEnvironment(refreshedEnvironment)
-      setStatusMessage('도구 경로와 로그인 상태를 다시 점검했습니다.')
+      setSettings(prepared.settings)
+      setDraftSettings(prepared.settings)
+      setEnvironment(prepared.environment)
+      setErrorMessage(prepared.issues.join('\n'))
+      setStatusMessage(prepared.message)
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error))
     } finally {
@@ -635,8 +637,12 @@ function App() {
             />
           </label>
 
-          <button className="primary-button save-button" onClick={handleRefreshEnvironment}>
-            저장 및 점검
+          <button
+            className="primary-button save-button"
+            onClick={handleRefreshEnvironment}
+            disabled={isBusy}
+          >
+            {isBusy ? '준비 중...' : '저장 및 점검'}
           </button>
         </div>
 
@@ -925,6 +931,9 @@ function App() {
               <p className="section-note">
                 영상 {folderVideos.length}개 · 분석됨 {analyzedFolderVideoCount}개 · 미분석{' '}
                 {pendingFolderVideoCount}개
+                {!analysisPrerequisitesReady
+                  ? ' · 분석 전 상단 저장 및 점검에서 Codex, 로그인, ffmpeg, ffprobe를 준비해야 합니다.'
+                  : ''}
               </p>
             </div>
 
@@ -940,7 +949,8 @@ function App() {
                   disabled={
                     !selectedFolderPath ||
                     isBusy ||
-                    (selectedFolderNode?.directVideoCount ?? folderVideos.length) === 0
+                    (selectedFolderNode?.directVideoCount ?? folderVideos.length) === 0 ||
+                    !analysisPrerequisitesReady
                   }
                 >
                   선택 폴더 분석
@@ -1129,6 +1139,19 @@ function formatResolution(width?: number, height?: number) {
   }
 
   return `${width}×${height}`
+}
+
+function areAnalysisPrerequisitesReady(environment: EnvironmentStatus | null) {
+  if (!environment) {
+    return false
+  }
+
+  return (
+    environment.checks.codex.ok &&
+    environment.checks.chatgptLogin.ok &&
+    environment.checks.ffmpeg.ok &&
+    environment.checks.ffprobe.ok
+  )
 }
 
 function getFallbackSettings(): ToolSettings {

@@ -24,6 +24,14 @@ export interface EnvironmentStatus {
   }
 }
 
+export interface EnvironmentPreparationResult {
+  settings: ToolSettings
+  environment: EnvironmentStatus
+  actions: string[]
+  issues: string[]
+  message: string
+}
+
 export interface FolderItem {
   name: string
   path: string
@@ -155,6 +163,7 @@ export interface CodexVideoAnalyzerApi {
   getSettings: () => Promise<ToolSettings>
   saveSettings: (patch: Partial<ToolSettings>) => Promise<ToolSettings>
   getEnvironmentStatus: () => Promise<EnvironmentStatus>
+  prepareEnvironment: (patch: Partial<ToolSettings>) => Promise<EnvironmentPreparationResult>
   pickRootFolder: () => Promise<string>
   scanFolders: (rootPath: string) => Promise<FolderItem[]>
   loadFolderTree: (rootPath: string) => Promise<FolderTreeNode | null>

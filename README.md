@@ -62,10 +62,14 @@ npm run dist:mac
 2. 상단에서 `Codex 실행 파일`, `ffmpeg 실행 파일` 경로를 확인합니다.
    - macOS에서 Finder로 앱을 열었을 때 PATH가 잡히지 않으면 절대경로를 넣으세요.
    - 예: `/opt/homebrew/bin/codex`, `/opt/homebrew/bin/ffmpeg`
-3. `저장 및 점검`을 눌러 도구 상태를 확인합니다.
+3. `저장 및 점검`을 누르면 도구 경로를 저장하고 상태를 다시 점검합니다.
+   - macOS에서는 `ffmpeg` 또는 `ffprobe`가 없을 때 Homebrew로 `ffmpeg` 자동 설치를 시도합니다.
+   - `Codex`, `ChatGPT 로그인`, `ffmpeg`, `ffprobe`가 모두 준비되지 않으면 분석 버튼은 비활성화됩니다.
 4. `라이브러리 선택`으로 영상 폴더들의 상위 루트를 고릅니다.
 5. 왼쪽 목록에서 분석할 폴더 하나를 선택합니다.
 6. `이 폴더 분석`을 누르면 해당 폴더의 바로 아래 영상만 분석합니다.
+   - 분석이 필요한 파일이 여러 개면 기본값으로 최대 4개를 병렬 처리합니다.
+   - 분석 대상이 4개 이하면 파일 수만큼만 실행합니다.
 7. 분석이 끝나면 가운데 결과 목록에서 검색/필터링하고, 오른쪽에서 바로 재생합니다.
 
 ## 결과 파일
@@ -75,6 +79,14 @@ npm run dist:mac
 ```text
 selected-folder/
   analyze/
+    runs/
+      2026-04-08T06-32-10-123Z-root/
+        run.json
+        events.log
+        worker-01.task.json
+        worker-01.stdout.log
+        worker-01.stderr.log
+        worker-01.last-message.txt
     index.md
     results.json
     _overview.jpg
