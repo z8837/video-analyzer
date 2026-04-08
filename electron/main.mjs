@@ -29,7 +29,7 @@ import {
 
 const FIXED_MODEL = 'gpt-5.4'
 const FIXED_REASONING = 'high'
-const MAX_PARALLEL_ANALYSIS = 3
+const MAX_PARALLEL_ANALYSIS = 4
 const ANALYSIS_CHANNEL = 'analysis:event'
 const APP_CHANNEL = 'app:event'
 const LOCAL_ASSET_SCHEME = 'codex-media'
