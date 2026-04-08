@@ -13,6 +13,8 @@ import type {
   ToolSettings,
 } from './types'
 
+type ViewMode = 'folders' | 'library'
+
 const EMPTY_PROGRESS: AnalysisProgress = {
   exists: false,
   folderPath: '',
@@ -110,7 +112,6 @@ function FolderTreeBranch({
         </button>
         <button className="tree-label" type="button" onClick={() => onSelect(node.path)}>
           <strong>{label}</strong>
-          <span>{node.relativePath}</span>
           <small>
             직접 {node.directVideoCount}개 · 전체 {node.totalVideoCount}개
           </small>
@@ -137,6 +138,7 @@ function FolderTreeBranch({
 }
 
 function App() {
+  const [viewMode, setViewMode] = useState<ViewMode>('folders')
   const [settings, setSettings] = useState<ToolSettings | null>(null)
   const [draftSettings, setDraftSettings] = useState<ToolSettings | null>(null)
   const [environment, setEnvironment] = useState<EnvironmentStatus | null>(null)
@@ -154,11 +156,9 @@ function App() {
   const [isBusy, setIsBusy] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
   const [expandedFolderPaths, setExpandedFolderPaths] = useState<string[]>([])
+  const [showSettings, setShowSettings] = useState(false)
+  const [showLog, setShowLog] = useState(false)
   const deferredSearchText = useDeferredValue(searchText)
-
-  const analyzeFolderPath = rootFolder
-    ? `${rootFolder.replace(/[\\/]+$/, '')}${rootFolder.includes('\\') ? '\\' : '/'}analyze`
-    : ''
 
   const analysisByPath = useMemo(() => {
     return new Map((analysis?.videos ?? []).map((video) => [video.absolutePath, video]))
@@ -274,13 +274,13 @@ function App() {
       })
 
       if (loadedAnalysis.videos.length > 0) {
-        setStatusMessage(`analyze에서 ${loadedAnalysis.videos.length}개 영상을 불러왔습니다.`)
+        setStatusMessage(`${loadedAnalysis.videos.length}개 분석 결과를 불러왔습니다.`)
       } else if (loadedFolderVideos.length > 0) {
         setStatusMessage(
           `${formatFolderPath(nextFolderPath, basePath)} 폴더의 영상 ${loadedFolderVideos.length}개를 불러왔습니다.`,
         )
       } else {
-        setStatusMessage('아직 분석 결과가 없습니다. 하단 폴더에서 영상을 선택해 주세요.')
+        setStatusMessage('아직 분석 결과가 없습니다.')
       }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error))
@@ -404,6 +404,7 @@ function App() {
         if (event.type === 'started') {
           setIsAnalyzing(true)
           setLogLines([])
+          setShowLog(true)
           setStatusMessage(`분석 시작: ${formatFolderPath(event.folderPath, rootFolder)}`)
           setErrorMessage('')
           setProgress(await window.codexVideoAnalyzer.loadAnalysisProgress(event.folderPath))
@@ -566,302 +567,481 @@ function App() {
   }
 
   return (
-    <main className="app-shell">
-      <section className="panel control-panel">
-        <div className="control-header">
+    <div className="app-shell">
+      {/* ── 사이드바 ── */}
+      <aside className="sidebar">
+        <div className="sidebar-brand">
+          <span className="brand-icon">▶</span>
           <div>
-            <p className="section-kicker">Workspace</p>
-            <h1>기본 폴더 작업 공간</h1>
-            <p className="path-copy">
-              {rootFolder || '기본 폴더를 선택하면 analyze 결과와 하위 폴더 구조를 불러옵니다.'}
-            </p>
-          </div>
-
-          <div className="action-group">
-            <button className="ghost-button" onClick={handlePickRootFolder} disabled={isBusy}>
-              기본 폴더 선택
-            </button>
-            <button
-              className="ghost-button"
-              onClick={() => rootFolder && window.codexVideoAnalyzer.showItemInFolder(rootFolder)}
-              disabled={!rootFolder}
-            >
-              기본 폴더 열기
-            </button>
-            <button
-              className="ghost-button"
-              onClick={() =>
-                analyzeFolderPath &&
-                window.codexVideoAnalyzer.showItemInFolder(analyzeFolderPath)
-              }
-              disabled={!analyzeFolderPath}
-            >
-              analyze 열기
-            </button>
-            <button
-              className="ghost-button"
-              onClick={() => refreshWorkspace(rootFolder, selectedFolderPath || rootFolder, true)}
-              disabled={!rootFolder || isBusy}
-            >
-              새로고침
-            </button>
+            <strong>영상 분석기</strong>
+            <small>로컬 분석 작업 공간</small>
           </div>
         </div>
 
-        <div className="tool-grid">
-          <label className="field compact-field">
-            <span>Codex 실행 파일</span>
-            <input
-              value={draftSettings?.codexCommand ?? ''}
-              onChange={(event) =>
-                setDraftSettings((current) => ({
-                  ...(current ?? getFallbackSettings()),
-                  codexCommand: event.target.value,
-                }))
-              }
-              placeholder={environment?.settings.codexCommand ?? 'codex'}
-            />
-          </label>
-
-          <label className="field compact-field">
-            <span>ffmpeg 실행 파일</span>
-            <input
-              value={draftSettings?.ffmpegCommand ?? ''}
-              onChange={(event) =>
-                setDraftSettings((current) => ({
-                  ...(current ?? getFallbackSettings()),
-                  ffmpegCommand: event.target.value,
-                }))
-              }
-              placeholder={environment?.settings.ffmpegCommand ?? 'ffmpeg'}
-            />
-          </label>
-
+        <nav className="sidebar-nav">
           <button
-            className="primary-button save-button"
-            onClick={handleRefreshEnvironment}
-            disabled={isBusy}
+            className={`nav-item ${viewMode === 'folders' ? 'active' : ''}`}
+            onClick={() => setViewMode('folders')}
           >
-            {isBusy ? '준비 중...' : '저장 및 점검'}
+            <span className="nav-icon">📂</span>
+            폴더 탐색
           </button>
+          <button
+            className={`nav-item ${viewMode === 'library' ? 'active' : ''}`}
+            onClick={() => setViewMode('library')}
+          >
+            <span className="nav-icon">📊</span>
+            분석 라이브러리
+          </button>
+        </nav>
+
+        <div className="sidebar-divider" />
+
+        <nav className="sidebar-nav">
+          <button
+            className={`nav-item ${showSettings ? 'active' : ''}`}
+            onClick={() => setShowSettings(!showSettings)}
+          >
+            <span className="nav-icon">⚙</span>
+            설정
+          </button>
+          <button
+            className={`nav-item ${showLog ? 'active' : ''}`}
+            onClick={() => setShowLog(!showLog)}
+          >
+            <span className="nav-icon">📋</span>
+            실행 로그
+          </button>
+        </nav>
+
+        <div className="sidebar-spacer" />
+
+        {/* 사이드바 하단: 상태 표시 */}
+        <div className="sidebar-status">
+          <div className="status-dots">
+            <span className={`dot ${environment?.checks.codex.ok ? 'ok' : 'bad'}`} />
+            <span className={`dot ${environment?.checks.chatgptLogin.ok ? 'ok' : 'bad'}`} />
+            <span className={`dot ${environment?.checks.ffmpeg.ok ? 'ok' : 'bad'}`} />
+            <span className={`dot ${environment?.checks.ffprobe.ok ? 'ok' : 'bad'}`} />
+          </div>
+          <small>{isAnalyzing ? '분석 중...' : '대기 중'}</small>
         </div>
 
-        <div className="status-strip">
-          <span className={`status-pill-inline ${environment?.checks.codex.ok ? 'ok' : 'bad'}`}>
-            Codex {environment?.checks.codex.ok ? '준비됨' : '확인 필요'}
-          </span>
-          <span
-            className={`status-pill-inline ${
-              environment?.checks.chatgptLogin.ok ? 'ok' : 'bad'
-            }`}
-          >
-            로그인 {environment?.checks.chatgptLogin.ok ? '정상' : '필요'}
-          </span>
-          <span className={`status-pill-inline ${environment?.checks.ffmpeg.ok ? 'ok' : 'bad'}`}>
-            ffmpeg {environment?.checks.ffmpeg.ok ? '준비됨' : '확인 필요'}
-          </span>
-          <span
-            className={`status-pill-inline ${environment?.checks.ffprobe.ok ? 'ok' : 'bad'}`}
-          >
-            ffprobe {environment?.checks.ffprobe.ok ? '준비됨' : '확인 필요'}
-          </span>
-          <span className="status-pill-inline neutral">
-            상태 {isAnalyzing ? '분석 중' : '대기 중'}
-          </span>
-          <span className="status-pill-inline neutral">
-            선택 폴더 {formatFolderPath(selectedFolderPath, rootFolder)}
-          </span>
-        </div>
+        <button className="sidebar-folder-btn" onClick={handlePickRootFolder} disabled={isBusy}>
+          📁 기본 폴더 선택
+        </button>
+      </aside>
 
-        <div className="progress-strip">
-          <div>
-            <p className="section-kicker">Progress</p>
-            <strong>{formatProgressStatus(displayProgress.status)}</strong>
-            <span>{statusMessage}</span>
+      {/* ── 메인 영역 ── */}
+      <main className="main-area">
+        {/* 진행도 바 (분석 중일 때) */}
+        {isAnalyzing && (
+          <div className="top-progress">
+            <div className="top-progress-bar">
+              <div
+                className="top-progress-fill"
+                style={{ width: `${Math.max(0, Math.min(100, displayProgress.percent))}%` }}
+              />
+            </div>
+            <div className="top-progress-info">
+              <span>{displayProgress.percent}% · {displayProgress.message || '분석 중...'}</span>
+              <button className="cancel-btn" onClick={handleCancel}>취소</button>
+            </div>
           </div>
-          <div className="progress-metrics">
-            <span>전체 {displayProgress.totalFiles}개</span>
-            <span>재사용 {displayProgress.reusableFiles}개</span>
-            <span>신규 완료 {displayProgress.completedFiles}개</span>
-            <span>남음 {displayProgress.pendingFiles}개</span>
-            <span>{displayProgress.percent}%</span>
-          </div>
-          <div className="progress-bar" aria-hidden="true">
-            <div
-              className="progress-bar-fill"
-              style={{ width: `${Math.max(0, Math.min(100, displayProgress.percent))}%` }}
-            />
-          </div>
-        </div>
+        )}
 
         {errorMessage && <div className="error-banner">{errorMessage}</div>}
-      </section>
 
-      <section className="top-workspace">
-        <article className="panel analysis-panel">
-          <div className="section-heading">
-            <div>
-              <p className="section-kicker">Analyze Library</p>
-              <h2>분석된 영상 리스트</h2>
-              <p className="section-note">
-                analyze 폴더에서 읽은 영상 {analysis?.videos.length ?? 0}개
-              </p>
+        {/* ── 설정 패널 (토글) ── */}
+        {showSettings && (
+          <section className="panel settings-panel">
+            <div className="settings-header">
+              <h2>환경 설정</h2>
+              <button className="ghost-button" onClick={() => setShowSettings(false)}>닫기</button>
             </div>
-            <span className="count-chip">{filteredAnalysisVideos.length}개 표시</span>
-          </div>
-
-          <div className="filter-row">
-            <input
-              className="search-input"
-              value={searchText}
-              onChange={(event) => setSearchText(event.target.value)}
-              placeholder="제목, 요약, 태그, 파일명으로 검색"
-            />
-            <button className="ghost-button" onClick={() => setSearchText('')}>
-              검색 초기화
-            </button>
-          </div>
-
-          <div className="video-list analysis-list">
-            {filteredAnalysisVideos.map((video) => (
-              <button
-                key={video.absolutePath}
-                className={`video-card ${
-                  video.absolutePath === selectedVideoPath ? 'active' : ''
-                }`}
-                onClick={() => setSelectedVideoPath(video.absolutePath)}
-              >
-                <VideoThumbnail
-                  videoUrl={video.videoUrl}
-                  sampleImageUrl={video.sampleImageUrl}
-                  title={video.title}
+            <div className="settings-grid">
+              <label className="field">
+                <span>Codex 실행 파일</span>
+                <input
+                  value={draftSettings?.codexCommand ?? ''}
+                  onChange={(event) =>
+                    setDraftSettings((current) => ({
+                      ...(current ?? getFallbackSettings()),
+                      codexCommand: event.target.value,
+                    }))
+                  }
+                  placeholder={environment?.settings.codexCommand ?? 'codex'}
                 />
-
-                <div className="video-card-body">
-                  <div className="video-card-top">
-                    <strong>{video.title}</strong>
-                    <span className="status-badge analyzed">분석됨</span>
-                  </div>
-                  <span>{video.relativePath}</span>
-                  <p>{video.summary}</p>
-                  <div className="pill-row">
-                    {video.categories.slice(0, 3).map((category) => (
-                      <span key={`${video.absolutePath}-${category}`} className="mini-pill">
-                        {category}
-                      </span>
-                    ))}
-                  </div>
-                </div>
+              </label>
+              <label className="field">
+                <span>ffmpeg 실행 파일</span>
+                <input
+                  value={draftSettings?.ffmpegCommand ?? ''}
+                  onChange={(event) =>
+                    setDraftSettings((current) => ({
+                      ...(current ?? getFallbackSettings()),
+                      ffmpegCommand: event.target.value,
+                    }))
+                  }
+                  placeholder={environment?.settings.ffmpegCommand ?? 'ffmpeg'}
+                />
+              </label>
+              <button className="primary-button" onClick={handleRefreshEnvironment} disabled={isBusy}>
+                {isBusy ? '준비 중...' : '저장 및 점검'}
               </button>
-            ))}
-
-            {filteredAnalysisVideos.length === 0 && (
-              <div className="empty-card">
-                {analysis?.videos.length
-                  ? '검색 조건에 맞는 분석 결과가 없습니다.'
-                  : 'analyze 폴더에 읽을 수 있는 분석 결과가 아직 없습니다.'}
-              </div>
-            )}
-          </div>
-        </article>
-
-        <article className="panel viewer-panel">
-          <div className="section-heading">
-            <div>
-              <p className="section-kicker">Selected Video</p>
-              <h2>{selectedVideo?.title || selectedVideo?.fileName || '영상 정보'}</h2>
             </div>
-            <div className="action-group">
-              {selectedVideo && (
-                <span className={`status-badge ${selectedVideoIsAnalyzed ? 'analyzed' : 'pending'}`}>
-                  {selectedVideoIsAnalyzed ? '분석됨' : '미분석'}
-                </span>
+            <div className="status-strip">
+              <span className={`status-pill ${environment?.checks.codex.ok ? 'ok' : 'bad'}`}>
+                Codex {environment?.checks.codex.ok ? '준비됨' : '확인 필요'}
+              </span>
+              <span className={`status-pill ${environment?.checks.chatgptLogin.ok ? 'ok' : 'bad'}`}>
+                로그인 {environment?.checks.chatgptLogin.ok ? '정상' : '필요'}
+              </span>
+              <span className={`status-pill ${environment?.checks.ffmpeg.ok ? 'ok' : 'bad'}`}>
+                ffmpeg {environment?.checks.ffmpeg.ok ? '준비됨' : '확인 필요'}
+              </span>
+              <span className={`status-pill ${environment?.checks.ffprobe.ok ? 'ok' : 'bad'}`}>
+                ffprobe {environment?.checks.ffprobe.ok ? '준비됨' : '확인 필요'}
+              </span>
+            </div>
+          </section>
+        )}
+
+        {/* ── 실행 로그 (토글) ── */}
+        {showLog && (
+          <section className="panel log-panel">
+            <div className="settings-header">
+              <h2>실행 로그</h2>
+              <div className="action-group">
+                <span className="status-inline">{statusMessage}</span>
+                <button className="ghost-button" onClick={() => setShowLog(false)}>닫기</button>
+              </div>
+            </div>
+            <pre className="console-output">
+              {logLines.length > 0
+                ? logLines.join('\n')
+                : '아직 실행 로그가 없습니다. 폴더 분석을 시작하면 Codex 출력이 여기에 표시됩니다.'}
+            </pre>
+          </section>
+        )}
+
+        {/* ══════ 폴더 탐색 뷰 ══════ */}
+        {viewMode === 'folders' && (
+          <div className="folder-view">
+            {/* 좌측: 폴더 트리 */}
+            <aside className="folder-tree-pane panel">
+              <div className="pane-header">
+                <h2>폴더 구조</h2>
+                <div className="action-group">
+                  <button
+                    className="ghost-button small"
+                    onClick={() => rootFolder && window.codexVideoAnalyzer.showItemInFolder(rootFolder)}
+                    disabled={!rootFolder}
+                  >
+                    열기
+                  </button>
+                  <button
+                    className="ghost-button small"
+                    onClick={() => refreshWorkspace(rootFolder, selectedFolderPath || rootFolder, true)}
+                    disabled={!rootFolder || isBusy}
+                  >
+                    새로고침
+                  </button>
+                </div>
+              </div>
+
+              {rootFolder && <p className="root-path">{rootFolder}</p>}
+
+              {folderTree ? (
+                <div className="tree-scroll">
+                  <FolderTreeBranch
+                    node={folderTree}
+                    depth={0}
+                    expandedPaths={expandedPathSet}
+                    selectedPath={selectedFolderPath}
+                    onToggle={handleToggleFolder}
+                    onSelect={(folderPath) => void loadFolderVideosForPath(folderPath, false)}
+                  />
+                </div>
+              ) : (
+                <div className="empty-card">기본 폴더를 선택하면 폴더 트리가 표시됩니다.</div>
               )}
-              <button
-                className="ghost-button"
-                disabled={!selectedVideo}
-                onClick={() =>
-                  selectedVideo &&
-                  window.codexVideoAnalyzer.showItemInFolder(selectedVideo.absolutePath)
-                }
-              >
-                파일 위치
-              </button>
-              <button
-                className="ghost-button"
-                disabled={!selectedVideo}
-                onClick={() =>
-                  selectedVideo &&
-                  window.codexVideoAnalyzer.openPath(selectedVideo.absolutePath)
-                }
-              >
-                외부 앱으로 열기
-              </button>
-              <button
-                className="ghost-button"
-                disabled={!selectedAnalysisVideo}
-                onClick={() =>
-                  selectedAnalysisVideo &&
-                  window.codexVideoAnalyzer.openPath(selectedAnalysisVideo.analysisFilePath)
-                }
-              >
-                Markdown 열기
-              </button>
-            </div>
+
+              {/* 분석 버튼 */}
+              <div className="analyze-action">
+                {isAnalyzing ? (
+                  <button className="danger-button full-width" onClick={handleCancel}>
+                    분석 취소
+                  </button>
+                ) : (
+                  <button
+                    className="primary-button full-width"
+                    onClick={handleAnalyzeSelectedFolder}
+                    disabled={
+                      !selectedFolderPath ||
+                      isBusy ||
+                      (selectedFolderNode?.directVideoCount ?? folderVideos.length) === 0 ||
+                      !analysisPrerequisitesReady
+                    }
+                  >
+                    선택 폴더 분석
+                  </button>
+                )}
+              </div>
+            </aside>
+
+            {/* 중앙: 폴더 영상 목록 */}
+            <section className="folder-content">
+              <div className="content-header">
+                <div>
+                  <h1>{formatFolderPath(selectedFolderPath, rootFolder)}</h1>
+                  <p className="content-subtitle">
+                    영상 {folderVideos.length}개 · 분석됨 {analyzedFolderVideoCount}개 · 미분석 {pendingFolderVideoCount}개
+                  </p>
+                </div>
+              </div>
+
+              <div className="video-grid">
+                {folderVideos.map((video) => (
+                  <button
+                    key={video.absolutePath}
+                    className={`video-card ${video.absolutePath === selectedVideoPath ? 'active' : ''}`}
+                    onClick={() => setSelectedVideoPath(video.absolutePath)}
+                  >
+                    <VideoThumbnail
+                      videoUrl={video.videoUrl}
+                      sampleImageUrl={video.sampleImageUrl}
+                      title={video.title}
+                    />
+                    <div className="video-card-body">
+                      <div className="video-card-top">
+                        <strong>{video.analyzed ? video.title : video.fileName}</strong>
+                        <span className={`status-badge ${video.analyzed ? 'analyzed' : 'pending'}`}>
+                          {video.analyzed ? '분석됨' : '미분석'}
+                        </span>
+                      </div>
+                      <p>
+                        {video.analyzed
+                          ? video.summary
+                          : '아직 분석 결과가 없습니다.'}
+                      </p>
+                    </div>
+                  </button>
+                ))}
+
+                {folderVideos.length === 0 && (
+                  <div className="empty-card">선택한 폴더에 직접 들어 있는 영상이 없습니다.</div>
+                )}
+              </div>
+            </section>
+
+            {/* 우측: 선택 영상 상세 */}
+            <aside className="detail-pane panel">
+              {selectedVideo ? (
+                <>
+                  <video
+                    key={selectedAnalysisVideo?.videoUrl || selectedFolderVideo?.videoUrl || ''}
+                    className="detail-player"
+                    src={selectedAnalysisVideo?.videoUrl || selectedFolderVideo?.videoUrl || ''}
+                    controls
+                    playsInline
+                    preload="metadata"
+                  />
+
+                  <h2>{selectedVideo?.title || selectedVideo?.fileName || '영상 정보'}</h2>
+
+                  <div className="detail-meta">
+                    <div className="meta-item">
+                      <span>길이</span>
+                      <strong>{formatDuration(selectedVideo.durationSeconds)}</strong>
+                    </div>
+                    <div className="meta-item">
+                      <span>해상도</span>
+                      <strong>{formatResolution(selectedVideo.width, selectedVideo.height)}</strong>
+                    </div>
+                    <div className="meta-item">
+                      <span>오디오</span>
+                      <strong>{selectedVideo.hasAudio == null ? '-' : selectedVideo.hasAudio ? '있음' : '없음'}</strong>
+                    </div>
+                  </div>
+
+                  {selectedVideoIsAnalyzed && selectedAnalysisVideo ? (
+                    <>
+                      <div className="detail-section">
+                        <h3>요약</h3>
+                        <p>{selectedAnalysisVideo.summary}</p>
+                      </div>
+                      <div className="detail-section">
+                        <h3>세부 설명</h3>
+                        <ul>
+                          {selectedAnalysisVideo.details.map((detail) => (
+                            <li key={detail}>{detail}</li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div className="detail-section">
+                        <h3>태그</h3>
+                        <div className="pill-row">
+                          {[...selectedAnalysisVideo.categories, ...selectedAnalysisVideo.keywords].map(
+                            (tag) => (
+                              <span key={`${selectedAnalysisVideo.absolutePath}-${tag}`} className="mini-pill">
+                                {tag}
+                              </span>
+                            ),
+                          )}
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="detail-section">
+                      <p className="muted">이 영상은 아직 분석되지 않았습니다.</p>
+                    </div>
+                  )}
+
+                  <div className="detail-actions">
+                    <button
+                      className="ghost-button small"
+                      onClick={() => selectedVideo && window.codexVideoAnalyzer.showItemInFolder(selectedVideo.absolutePath)}
+                    >
+                      파일 위치
+                    </button>
+                    <button
+                      className="ghost-button small"
+                      onClick={() => selectedVideo && window.codexVideoAnalyzer.openPath(selectedVideo.absolutePath)}
+                    >
+                      외부 앱으로 열기
+                    </button>
+                    {selectedAnalysisVideo && (
+                      <button
+                        className="ghost-button small"
+                        onClick={() => window.codexVideoAnalyzer.openPath(selectedAnalysisVideo.analysisFilePath)}
+                      >
+                        분석 문서 열기
+                      </button>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="empty-card detail-empty">
+                  영상을 선택하면 상세 정보가 여기에 표시됩니다.
+                </div>
+              )}
+            </aside>
           </div>
+        )}
 
-          {selectedVideo ? (
-            <>
-              <video
-                key={selectedAnalysisVideo?.videoUrl || selectedFolderVideo?.videoUrl || ''}
-                className="video-player"
-                src={selectedAnalysisVideo?.videoUrl || selectedFolderVideo?.videoUrl || ''}
-                controls
-                playsInline
-                preload="metadata"
-              />
-
-              <div className="selected-meta-grid">
-                <div className="meta-card">
-                  <span>경로</span>
-                  <strong>{selectedAnalysisVideo?.relativePath || selectedFolderVideo?.relativePath}</strong>
+        {/* ══════ 분석 라이브러리 뷰 ══════ */}
+        {viewMode === 'library' && (
+          <div className="library-view">
+            {/* 좌측: 카드 그리드 */}
+            <section className="library-content">
+              <div className="content-header">
+                <div>
+                  <h1>분석 라이브러리</h1>
+                  <p className="content-subtitle">
+                    분석 완료된 영상 {analysis?.videos.length ?? 0}개
+                  </p>
                 </div>
-                <div className="meta-card">
-                  <span>길이</span>
-                  <strong>{formatDuration(selectedVideo.durationSeconds)}</strong>
-                </div>
-                <div className="meta-card">
-                  <span>해상도</span>
-                  <strong>{formatResolution(selectedVideo.width, selectedVideo.height)}</strong>
-                </div>
-                <div className="meta-card">
-                  <span>오디오</span>
-                  <strong>{selectedVideo.hasAudio == null ? '-' : selectedVideo.hasAudio ? '있음' : '없음'}</strong>
+                <div className="filter-row">
+                  <input
+                    className="search-input"
+                    value={searchText}
+                    onChange={(event) => setSearchText(event.target.value)}
+                    placeholder="제목, 요약, 태그, 파일명으로 검색"
+                  />
+                  {searchText && (
+                    <button className="ghost-button small" onClick={() => setSearchText('')}>
+                      초기화
+                    </button>
+                  )}
                 </div>
               </div>
 
-              <div className="detail-block">
-                <p className="detail-label">요약</p>
-                <p className="summary-copy">
-                  {selectedVideoIsAnalyzed
-                    ? selectedAnalysisVideo?.summary
-                    : '이 영상은 아직 analyze 결과가 없습니다. 하단 폴더 영역에서 선택한 폴더를 분석하면 여기에서 요약과 태그를 볼 수 있습니다.'}
-                </p>
-              </div>
+              <div className="library-grid">
+                {filteredAnalysisVideos.map((video) => (
+                  <button
+                    key={video.absolutePath}
+                    className={`lib-card ${video.absolutePath === selectedVideoPath ? 'active' : ''}`}
+                    onClick={() => setSelectedVideoPath(video.absolutePath)}
+                  >
+                    <VideoThumbnail
+                      videoUrl={video.videoUrl}
+                      sampleImageUrl={video.sampleImageUrl}
+                      title={video.title}
+                    />
+                    <div className="lib-card-body">
+                      <strong>{video.title}</strong>
+                      <span className="lib-card-meta">
+                        {video.relativePath} · {formatDuration(video.durationSeconds)}
+                      </span>
+                      <p>{video.summary}</p>
+                      <div className="pill-row">
+                        {video.categories.slice(0, 3).map((category) => (
+                          <span key={`${video.absolutePath}-${category}`} className="mini-pill">
+                            {category}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </button>
+                ))}
 
+                {filteredAnalysisVideos.length === 0 && (
+                  <div className="empty-card">
+                    {analysis?.videos.length
+                      ? '검색 조건에 맞는 분석 결과가 없습니다.'
+                      : '아직 분석된 영상이 없습니다. 폴더 탐색에서 분석을 시작해 주세요.'}
+                  </div>
+                )}
+              </div>
+            </section>
+
+            {/* 우측: 상세 인스펙터 */}
+            <aside className="detail-pane panel">
               {selectedAnalysisVideo ? (
                 <>
-                  <div className="detail-block">
-                    <p className="detail-label">세부 설명</p>
-                    <ul className="detail-list">
+                  <video
+                    key={selectedAnalysisVideo.videoUrl}
+                    className="detail-player"
+                    src={selectedAnalysisVideo.videoUrl}
+                    controls
+                    playsInline
+                    preload="metadata"
+                  />
+
+                  <h2>{selectedAnalysisVideo.title}</h2>
+
+                  <div className="detail-meta">
+                    <div className="meta-item">
+                      <span>길이</span>
+                      <strong>{formatDuration(selectedAnalysisVideo.durationSeconds)}</strong>
+                    </div>
+                    <div className="meta-item">
+                      <span>해상도</span>
+                      <strong>{formatResolution(selectedAnalysisVideo.width, selectedAnalysisVideo.height)}</strong>
+                    </div>
+                    <div className="meta-item">
+                      <span>오디오</span>
+                      <strong>{selectedAnalysisVideo.hasAudio == null ? '-' : selectedAnalysisVideo.hasAudio ? '있음' : '없음'}</strong>
+                    </div>
+                  </div>
+
+                  <div className="detail-section">
+                    <h3>요약</h3>
+                    <p>{selectedAnalysisVideo.summary}</p>
+                  </div>
+
+                  <div className="detail-section">
+                    <h3>세부 설명</h3>
+                    <ul>
                       {selectedAnalysisVideo.details.map((detail) => (
                         <li key={detail}>{detail}</li>
                       ))}
                     </ul>
                   </div>
 
-                  <div className="detail-block">
-                    <p className="detail-label">태그</p>
+                  <div className="detail-section">
+                    <h3>태그</h3>
                     <div className="pill-row">
                       {[...selectedAnalysisVideo.categories, ...selectedAnalysisVideo.keywords].map(
                         (tag) => (
@@ -876,144 +1056,38 @@ function App() {
                       )}
                     </div>
                   </div>
+
+                  <div className="detail-actions">
+                    <button
+                      className="ghost-button small"
+                      onClick={() => window.codexVideoAnalyzer.showItemInFolder(selectedAnalysisVideo.absolutePath)}
+                    >
+                      파일 위치
+                    </button>
+                    <button
+                      className="ghost-button small"
+                      onClick={() => window.codexVideoAnalyzer.openPath(selectedAnalysisVideo.absolutePath)}
+                    >
+                      외부 앱으로 열기
+                    </button>
+                    <button
+                      className="ghost-button small"
+                      onClick={() => window.codexVideoAnalyzer.openPath(selectedAnalysisVideo.analysisFilePath)}
+                    >
+                      분석 문서 열기
+                    </button>
+                  </div>
                 </>
               ) : (
-                <div className="detail-block">
-                  <p className="detail-label">상태</p>
-                  <p className="summary-copy">
-                    선택한 파일명은 <strong>{selectedFolderVideo?.fileName}</strong>입니다. 현재는
-                    폴더 내 원본 영상만 불러온 상태입니다.
-                  </p>
+                <div className="empty-card detail-empty">
+                  분석된 영상을 선택하면 상세 정보가 여기에 표시됩니다.
                 </div>
               )}
-            </>
-          ) : (
-            <div className="empty-card viewer-empty">
-              상단 분석 리스트나 하단 폴더 영상 리스트에서 영상을 선택하면 여기에서 바로 재생됩니다.
-            </div>
-          )}
-        </article>
-      </section>
-
-      <section className="bottom-workspace">
-        <article className="panel tree-panel">
-          <div className="section-heading">
-            <div>
-              <p className="section-kicker">Folder Tree</p>
-              <h2>기본 폴더 하위 구조</h2>
-              <p className="section-note">
-                선택한 폴더의 직접 포함 영상만 오른쪽 목록에 표시됩니다.
-              </p>
-            </div>
+            </aside>
           </div>
-
-          {folderTree ? (
-            <div className="tree-panel-body">
-              <FolderTreeBranch
-                node={folderTree}
-                depth={0}
-                expandedPaths={expandedPathSet}
-                selectedPath={selectedFolderPath}
-                onToggle={handleToggleFolder}
-                onSelect={(folderPath) => void loadFolderVideosForPath(folderPath, false)}
-              />
-            </div>
-          ) : (
-            <div className="empty-card">기본 폴더를 선택하면 폴더 트리가 표시됩니다.</div>
-          )}
-        </article>
-
-        <article className="panel folder-videos-panel">
-          <div className="section-heading">
-            <div>
-              <p className="section-kicker">Folder Videos</p>
-              <h2>{formatFolderPath(selectedFolderPath, rootFolder)}</h2>
-              <p className="section-note">
-                영상 {folderVideos.length}개 · 분석됨 {analyzedFolderVideoCount}개 · 미분석{' '}
-                {pendingFolderVideoCount}개
-                {!analysisPrerequisitesReady
-                  ? ' · 분석 전 상단 저장 및 점검에서 Codex, 로그인, ffmpeg, ffprobe를 준비해야 합니다.'
-                  : ''}
-              </p>
-            </div>
-
-            <div className="action-group">
-              {isAnalyzing ? (
-                <button className="danger-button" onClick={handleCancel}>
-                  분석 취소
-                </button>
-              ) : (
-                <button
-                  className="primary-button"
-                  onClick={handleAnalyzeSelectedFolder}
-                  disabled={
-                    !selectedFolderPath ||
-                    isBusy ||
-                    (selectedFolderNode?.directVideoCount ?? folderVideos.length) === 0 ||
-                    !analysisPrerequisitesReady
-                  }
-                >
-                  선택 폴더 분석
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div className="video-list folder-video-list">
-            {folderVideos.map((video) => (
-              <button
-                key={video.absolutePath}
-                className={`video-card ${
-                  video.absolutePath === selectedVideoPath ? 'active' : ''
-                }`}
-                onClick={() => setSelectedVideoPath(video.absolutePath)}
-              >
-                <VideoThumbnail
-                  videoUrl={video.videoUrl}
-                  sampleImageUrl={video.sampleImageUrl}
-                  title={video.title}
-                />
-
-                <div className="video-card-body">
-                  <div className="video-card-top">
-                    <strong>{video.analyzed ? video.title : video.fileName}</strong>
-                    <span className={`status-badge ${video.analyzed ? 'analyzed' : 'pending'}`}>
-                      {video.analyzed ? '분석됨' : '미분석'}
-                    </span>
-                  </div>
-                  <span>{video.relativePath}</span>
-                  <p>
-                    {video.analyzed
-                      ? video.summary
-                      : '아직 analyze 결과가 없습니다. 폴더 분석을 실행하면 요약과 태그가 채워집니다.'}
-                  </p>
-                </div>
-              </button>
-            ))}
-
-            {folderVideos.length === 0 && (
-              <div className="empty-card">선택한 폴더에 직접 들어 있는 영상이 없습니다.</div>
-            )}
-          </div>
-        </article>
-      </section>
-
-      <section className="panel console-panel">
-        <div className="section-heading">
-          <div>
-            <p className="section-kicker">Run Log</p>
-            <h2>실행 로그</h2>
-          </div>
-          <span className="status-inline">{statusMessage}</span>
-        </div>
-
-        <pre className="console-output">
-          {logLines.length > 0
-            ? logLines.join('\n')
-            : '아직 실행 로그가 없습니다. 폴더 분석을 시작하면 Codex 출력이 여기에 표시됩니다.'}
-        </pre>
-      </section>
-    </main>
+        )}
+      </main>
+    </div>
   )
 }
 
@@ -1108,21 +1182,6 @@ function formatFolderPath(folderPath: string, rootFolder: string) {
     : folderPath
 
   return relativePath || '기본 폴더'
-}
-
-function formatProgressStatus(status: string) {
-  switch (status) {
-    case 'running':
-      return '분석 진행 중'
-    case 'completed':
-      return '분석 완료'
-    case 'failed':
-      return '실패'
-    case 'cancelled':
-      return '취소됨'
-    default:
-      return '대기 중'
-  }
 }
 
 function formatDuration(durationSeconds?: number) {
