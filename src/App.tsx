@@ -1,5 +1,5 @@
 import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import type { SyntheticEvent } from 'react'
+import type { DragEvent, SyntheticEvent } from 'react'
 import './App.css'
 import type {
   AnalysisData,
@@ -354,6 +354,22 @@ function App() {
   }
 
   useEffect(() => {
+    const prevent = (e: Event) => {
+      const drag = e as globalThis.DragEvent
+      if (drag.dataTransfer?.types?.includes('Files')) {
+        e.preventDefault()
+        e.stopPropagation()
+      }
+    }
+    document.addEventListener('dragover', prevent)
+    document.addEventListener('drop', prevent)
+    return () => {
+      document.removeEventListener('dragover', prevent)
+      document.removeEventListener('drop', prevent)
+    }
+  }, [])
+
+  useEffect(() => {
     let cancelled = false
 
     const bootstrap = async () => {
@@ -590,6 +606,20 @@ function App() {
         `${video.fileName}에서 "${keywordMoment.label}" 시점(${formatDuration(keywordMoment.timeSeconds)})으로 이동했습니다.`,
       )
     }
+  }
+
+  const handleVideoFileDragStart = (
+    event: DragEvent<HTMLButtonElement>,
+    filePath: string,
+    iconPath = '',
+  ) => {
+    if (!filePath) {
+      event.preventDefault()
+      return
+    }
+
+    event.preventDefault()
+    window.codexVideoAnalyzer.startDragFile(filePath, iconPath)
   }
 
   const handleToggleFolder = (folderPath: string) => {
@@ -844,7 +874,12 @@ function App() {
                   <button
                     key={video.absolutePath}
                     className={`video-card ${video.absolutePath === folderSelectedVideoPath ? 'active' : ''}`}
+                    type="button"
+                    draggable
                     onClick={() => setFolderSelectedVideoPath(video.absolutePath)}
+                    onDragStart={(event) =>
+                      handleVideoFileDragStart(event, video.absolutePath, video.sampleImagePath)
+                    }
                   >
                     <VideoThumbnail
                       videoUrl={video.videoUrl}
@@ -1042,7 +1077,12 @@ function App() {
                   <button
                     key={video.absolutePath}
                     className={`lib-card ${video.absolutePath === librarySelectedVideoPath ? 'active' : ''}`}
+                    type="button"
+                    draggable
                     onClick={() => setLibrarySelectedVideoPath(video.absolutePath)}
+                    onDragStart={(event) =>
+                      handleVideoFileDragStart(event, video.absolutePath, video.sampleImagePath)
+                    }
                   >
                     <VideoThumbnail
                       videoUrl={video.videoUrl}

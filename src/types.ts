@@ -178,6 +178,7 @@ export interface CodexVideoAnalyzerApi {
   loadAnalysisProgress: (folderPath: string) => Promise<AnalysisProgress>
   startAnalysis: (folderPath: string) => Promise<{ ok: boolean }>
   cancelAnalysis: () => Promise<{ ok: boolean }>
+  startDragFile: (filePath: string, iconPath?: string) => void
   showItemInFolder: (targetPath: string) => Promise<boolean>
   openPath: (targetPath: string) => Promise<string>
   onAppEvent: (listener: (payload: AppEvent) => void) => () => void

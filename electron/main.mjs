@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net, protocol, shell } from 'electron'
 import { spawn } from 'node:child_process'
 import { mkdirSync, promises as fs } from 'node:fs'
 import path from 'node:path'
@@ -33,6 +33,8 @@ const MAX_PARALLEL_ANALYSIS = 4
 const ANALYSIS_CHANNEL = 'analysis:event'
 const APP_CHANNEL = 'app:event'
 const LOCAL_ASSET_SCHEME = 'codex-media'
+const DEFAULT_DRAG_ICON_DATA_URL =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4////fwAJ+wP9KobjigAAAABJRU5ErkJggg=='
 
 let mainWindow = null
 let activeRun = null
@@ -526,6 +528,25 @@ function buildFileUrl(filePath, cacheKey = '') {
     url.searchParams.set('v', cacheKey)
   }
   return url.href
+}
+
+function resolveDragIcon(preferredPath = '') {
+  const candidatePaths = [
+    preferredPath,
+    app.isPackaged
+      ? path.join(app.getAppPath(), 'dist', 'favicon.svg')
+      : path.join(app.getAppPath(), 'public', 'favicon.svg'),
+    path.join(app.getAppPath(), 'src', 'assets', 'hero.png'),
+  ].filter(Boolean)
+
+  for (const candidatePath of candidatePaths) {
+    const icon = nativeImage.createFromPath(candidatePath)
+    if (!icon.isEmpty()) {
+      return icon.resize({ width: 64, height: 64 })
+    }
+  }
+
+  return nativeImage.createFromDataURL(DEFAULT_DRAG_ICON_DATA_URL).resize({ width: 64, height: 64 })
 }
 
 function resolveSampleImagePath(analyzeDir, sampleImage) {
@@ -1722,6 +1743,14 @@ function createWindow() {
     }
   })
 
+  mainWindow.webContents.on('will-navigate', (event) => {
+    event.preventDefault()
+  })
+
+  mainWindow.webContents.session.on('will-download', (event) => {
+    event.preventDefault()
+  })
+
   mainWindow.webContents.on('did-finish-load', () => console.log('[electron] renderer finished load'))
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
     console.error(`[electron] did-fail-load code=${errorCode} url=${validatedURL} message=${errorDescription}`)
@@ -1783,6 +1812,19 @@ ipcMain.handle('analysis:load', async (_event, folderPath) => loadAnalysis(folde
 ipcMain.handle('analysis:load-progress', async (_event, folderPath) => loadAnalysisProgress(folderPath))
 ipcMain.handle('analysis:start', async (_event, folderPath) => startAnalysis(folderPath))
 ipcMain.handle('analysis:cancel', async () => cancelAnalysis())
+ipcMain.on('shell:start-drag', (event, payload) => {
+  const filePath = typeof payload?.filePath === 'string' ? payload.filePath : ''
+  const iconPath = typeof payload?.iconPath === 'string' ? payload.iconPath : ''
+
+  if (!filePath) {
+    return
+  }
+
+  event.sender.startDrag({
+    file: filePath,
+    icon: resolveDragIcon(iconPath),
+  })
+})
 ipcMain.handle('shell:show-item', async (_event, targetPath) => {
   shell.showItemInFolder(targetPath)
   return true
