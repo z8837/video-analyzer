@@ -1173,16 +1173,28 @@
 .lib-card .video-thumb-badge.filename {
   top: 8px;
   left: 8px;
-  right: 8px;
-  display: block;
-  max-width: none;
-  padding: 6px 10px;
-  border-radius: 12px;
-  font-size: 0.68rem;
+  right: auto;
+  display: inline-block;
+  max-width: calc(100% - 16px);
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  color: #000;
+  font-size: 0.72rem;
+  font-weight: 800;
   line-height: 1.4;
   white-space: normal;
-  text-overflow: clip;
-  text-align: center;
+  text-align: left;
+  text-shadow:
+    -1px -1px 0 #fff,
+     1px -1px 0 #fff,
+    -1px  1px 0 #fff,
+     1px  1px 0 #fff,
+     0   -1px 0 #fff,
+     0    1px 0 #fff,
+    -1px  0   0 #fff,
+     1px  0   0 #fff;
 }
 
 .lib-card .video-thumb-duration {
