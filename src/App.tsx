@@ -109,24 +109,20 @@ function FolderTreeBranch({
 
   return (
     <div className="tree-branch">
-      <div className={`tree-row ${isSelected ? 'selected' : ''}`}>
-        <button
-          className="tree-expander"
-          type="button"
-          onClick={() => hasChildren && onToggle(node.path)}
-          disabled={!hasChildren}
-          style={{ marginLeft: `${depth * 16}px` }}
-          aria-label={hasChildren ? `${label} 펼치기/접기` : `${label} 하위 폴더 없음`}
-        >
-          {hasChildren ? (isExpanded ? '▾' : '▸') : '•'}
-        </button>
-        <button className="tree-label" type="button" onClick={() => onSelect(node.path)}>
-          <strong>{label}</strong>
-          <small>
-            직접 {node.directVideoCount}개 · 전체 {node.totalVideoCount}개
-          </small>
-        </button>
-      </div>
+      <button
+        className={`tree-row ${isSelected ? 'selected' : ''}`}
+        type="button"
+        onClick={() => {
+          onSelect(node.path)
+          if (hasChildren) onToggle(node.path)
+        }}
+        style={{ paddingLeft: `${12 + depth * 18}px` }}
+      >
+        <span className="tree-arrow">{hasChildren ? (isExpanded ? '▾' : '▸') : ''}</span>
+        <span className="tree-icon">📁</span>
+        <span className="tree-name">{label}</span>
+        <span className="tree-count">{node.totalVideoCount}</span>
+      </button>
 
       {hasChildren && isExpanded && (
         <div className="tree-children">
@@ -842,7 +838,7 @@ function App() {
                 ))}
 
                 {folderVideos.length === 0 && (
-                  <div className="empty-card">선택한 폴더에 직접 들어 있는 영상이 없습니다.</div>
+                  <div className="empty-card">영상이 없습니다.</div>
                 )}
               </div>
             </section>
