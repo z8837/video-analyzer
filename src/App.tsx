@@ -418,7 +418,6 @@ function App() {
         if (event.type === 'started') {
           setIsAnalyzing(true)
           setLogLines([])
-          setShowLog(true)
           setStatusMessage(`분석 시작: ${formatFolderPath(event.folderPath, rootFolder)}`)
           setErrorMessage('')
           setProgress(await window.codexVideoAnalyzer.loadAnalysisProgress(event.folderPath))
@@ -996,12 +995,6 @@ function App() {
             {/* 좌측: 카드 그리드 */}
             <section className="library-content">
               <div className="content-header">
-                <div>
-                  <h1>분석 라이브러리</h1>
-                  <p className="content-subtitle">
-                    분석 완료된 영상 {analysis?.videos.length ?? 0}개
-                  </p>
-                </div>
                 <div className="filter-row">
                   <input
                     className="search-input"
