@@ -1189,15 +1189,58 @@
   justify-content: flex-start;
 }
 
+.library-content .content-header {
+  flex-direction: column;
+  align-items: stretch;
+}
+
 .library-content .filter-row {
+  flex-wrap: nowrap;
   width: 100%;
   gap: 10px;
+}
+
+.filter-clear-btn {
+  flex-shrink: 0;
+  align-self: stretch;
+  padding: 0 16px;
+  white-space: nowrap;
+  font-size: 0.88rem;
+}
+
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  border: 1px solid rgba(43, 122, 120, 0.25);
+  border-radius: 20px;
+  background: rgba(43, 122, 120, 0.1);
+  color: #2b7a78;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.filter-chip:hover {
+  background: rgba(220, 60, 60, 0.1);
+  border-color: rgba(220, 60, 60, 0.3);
+  color: #c0392b;
 }
 
 .library-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
+  flex: 1;
   min-height: 0;
   overflow-y: auto;
   align-content: start;
@@ -1231,12 +1274,13 @@
 .lib-card .video-thumb {
   display: block;
   width: 100%;
-  min-height: 128px;
+  height: 160px;
+  object-fit: cover;
   border-radius: 0;
 }
 
 .lib-card .video-thumb-player {
-  min-height: 128px;
+  height: 160px;
 }
 
 .lib-card .video-thumb-badge.filename {

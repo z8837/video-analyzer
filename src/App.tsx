@@ -157,7 +157,8 @@ function App() {
   const [progress, setProgress] = useState<AnalysisProgress>(EMPTY_PROGRESS)
   const [folderSelectedVideoPath, setFolderSelectedVideoPath] = useState('')
   const [librarySelectedVideoPath, setLibrarySelectedVideoPath] = useState('')
-  const [searchText, setSearchText] = useState('')
+  const [searchInput, setSearchInput] = useState('')
+  const [searchFilters, setSearchFilters] = useState<string[]>([])
   const [logLines, setLogLines] = useState<string[]>([])
   const [statusMessage, setStatusMessage] = useState('작업 공간을 준비하는 중입니다.')
   const [isAnalyzing, setIsAnalyzing] = useState(false)
@@ -166,7 +167,7 @@ function App() {
   const [expandedFolderPaths, setExpandedFolderPaths] = useState<string[]>([])
   const [showSettings, setShowSettings] = useState(false)
   const [showLog, setShowLog] = useState(false)
-  const deferredSearchText = useDeferredValue(searchText)
+  const deferredFilters = useDeferredValue(searchFilters)
   const folderPlayerRef = useRef<HTMLVideoElement | null>(null)
   const libraryPlayerRef = useRef<HTMLVideoElement | null>(null)
 
@@ -180,14 +181,24 @@ function App() {
 
   const expandedPathSet = useMemo(() => new Set(expandedFolderPaths), [expandedFolderPaths])
 
+  const addSearchFilter = (text: string) => {
+    const trimmed = text.trim()
+    if (trimmed && !searchFilters.includes(trimmed)) {
+      setSearchFilters((prev) => [...prev, trimmed])
+    }
+    setSearchInput('')
+  }
+
+  const removeSearchFilter = (filter: string) => {
+    setSearchFilters((prev) => prev.filter((f) => f !== filter))
+  }
+
   const filteredAnalysisVideos = useMemo(() => {
-    const query = deferredSearchText.trim().toLowerCase()
+    if (deferredFilters.length === 0) {
+      return analysis?.videos ?? []
+    }
 
     return (analysis?.videos ?? []).filter((video) => {
-      if (!query) {
-        return true
-      }
-
       const haystack = [
         video.title,
         video.summary,
@@ -200,9 +211,9 @@ function App() {
         .join(' ')
         .toLowerCase()
 
-      return haystack.includes(query)
+      return deferredFilters.every((filter) => haystack.includes(filter.toLowerCase()))
     })
-  }, [analysis, deferredSearchText])
+  }, [analysis, deferredFilters])
 
   const selectedFolderNode = useMemo(() => {
     if (!folderTree || !selectedFolderPath) {
@@ -385,7 +396,7 @@ function App() {
         setSettings(event.settings)
         setDraftSettings(event.settings)
         setRootFolder(event.rootPath)
-        setSearchText('')
+        setSearchFilters([])
         setErrorMessage('')
         setStatusMessage(`기본 폴더를 선택했습니다: ${event.rootPath}`)
       }
@@ -536,7 +547,7 @@ function App() {
       setSettings(saved)
       setDraftSettings(saved)
       setRootFolder(nextRootPath)
-      setSearchText('')
+      setSearchFilters([])
       setStatusMessage(`기본 폴더를 선택했습니다: ${nextRootPath}`)
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : String(error))
@@ -998,16 +1009,32 @@ function App() {
                 <div className="filter-row">
                   <input
                     className="search-input"
-                    value={searchText}
-                    onChange={(event) => setSearchText(event.target.value)}
-                    placeholder="제목, 요약, 태그, 파일명으로 검색"
+                    value={searchInput}
+                    onChange={(event) => setSearchInput(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+                        addSearchFilter(searchInput)
+                      }
+                    }}
+                    placeholder="검색어 입력 후 Enter"
                   />
-                  {searchText && (
-                    <button className="ghost-button small" onClick={() => setSearchText('')}>
-                      초기화
-                    </button>
-                  )}
+                  <button className="ghost-button small filter-clear-btn" onClick={() => setSearchFilters([])}>
+                    초기화
+                  </button>
                 </div>
+                {searchFilters.length > 0 && (
+                  <div className="filter-chips">
+                    {searchFilters.map((filter) => (
+                      <button
+                        key={filter}
+                        className="filter-chip"
+                        onClick={() => removeSearchFilter(filter)}
+                      >
+                        {filter}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="library-grid">
@@ -1155,7 +1182,7 @@ function App() {
                             key={`${librarySelectedVideo.absolutePath}-${tag}`}
                             type="button"
                             className="mini-pill clickable"
-                            onClick={() => setSearchText(tag)}
+                            onClick={() => addSearchFilter(tag)}
                           >
                             {tag}
                           </button>
