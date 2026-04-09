@@ -822,8 +822,6 @@ function App() {
                       videoUrl={video.videoUrl}
                       sampleImageUrl={video.sampleImageUrl}
                       title={video.title}
-                      badgeText="미리보기"
-                      badgeVariant="preview"
                       durationText={formatDuration(video.durationSeconds)}
                     />
                     <div className="video-card-body">
@@ -862,22 +860,25 @@ function App() {
                     preload="metadata"
                   />
 
-                  <h2>{selectedVideo?.title || selectedVideo?.fileName || '영상 정보'}</h2>
-                  <p className="detail-file-name">{selectedVideo.fileName}</p>
-
-                  <div className="detail-meta">
-                    <div className="meta-item">
-                      <span>길이</span>
-                      <strong>{formatDuration(selectedVideo.durationSeconds)}</strong>
+                  <div className="detail-header">
+                    <div className="detail-header-text">
+                      <h2>{selectedVideo?.title || selectedVideo?.fileName || '영상 정보'}</h2>
+                      <p className="detail-file-name">{selectedVideo.fileName}</p>
                     </div>
-                    <div className="meta-item">
-                      <span>해상도</span>
-                      <strong>{formatResolution(selectedVideo.width, selectedVideo.height)}</strong>
-                    </div>
-                    <div className="meta-item">
-                      <span>오디오</span>
-                      <strong>{selectedVideo.hasAudio == null ? '-' : selectedVideo.hasAudio ? '있음' : '없음'}</strong>
-                    </div>
+                    <button
+                      className="ghost-button small"
+                      onClick={() => selectedVideo && window.codexVideoAnalyzer.showItemInFolder(selectedVideo.absolutePath)}
+                    >
+                      파일 위치
+                    </button>
+                  </div>
+                  <div className="detail-inline-meta">
+                    <span className="detail-relative-path">
+                      {formatVideoFolderPath(selectedVideo.absolutePath, rootFolder)}
+                    </span>
+                    <span className="detail-duration-chip">
+                      {formatDuration(selectedVideo.durationSeconds)}
+                    </span>
                   </div>
 
                   {selectedVideoIsAnalyzed && selectedAnalysisVideo ? (
@@ -912,29 +913,6 @@ function App() {
                       <p className="muted">이 영상은 아직 분석되지 않았습니다.</p>
                     </div>
                   )}
-
-                  <div className="detail-actions">
-                    <button
-                      className="ghost-button small"
-                      onClick={() => selectedVideo && window.codexVideoAnalyzer.showItemInFolder(selectedVideo.absolutePath)}
-                    >
-                      파일 위치
-                    </button>
-                    <button
-                      className="ghost-button small"
-                      onClick={() => selectedVideo && window.codexVideoAnalyzer.openPath(selectedVideo.absolutePath)}
-                    >
-                      외부 앱으로 열기
-                    </button>
-                    {selectedAnalysisVideo && (
-                      <button
-                        className="ghost-button small"
-                        onClick={() => window.codexVideoAnalyzer.openPath(selectedAnalysisVideo.analysisFilePath)}
-                      >
-                        분석 문서 열기
-                      </button>
-                    )}
-                  </div>
                 </>
               ) : (
                 <div className="empty-card detail-empty">
@@ -1030,22 +1008,25 @@ function App() {
                     preload="metadata"
                   />
 
-                  <h2>{selectedAnalysisVideo.title}</h2>
-                  <p className="detail-file-name">{selectedAnalysisVideo.fileName}</p>
-
-                  <div className="detail-meta">
-                    <div className="meta-item">
-                      <span>길이</span>
-                      <strong>{formatDuration(selectedAnalysisVideo.durationSeconds)}</strong>
+                  <div className="detail-header">
+                    <div className="detail-header-text">
+                      <h2>{selectedAnalysisVideo.title}</h2>
+                      <p className="detail-file-name">{selectedAnalysisVideo.fileName}</p>
                     </div>
-                    <div className="meta-item">
-                      <span>해상도</span>
-                      <strong>{formatResolution(selectedAnalysisVideo.width, selectedAnalysisVideo.height)}</strong>
-                    </div>
-                    <div className="meta-item">
-                      <span>오디오</span>
-                      <strong>{selectedAnalysisVideo.hasAudio == null ? '-' : selectedAnalysisVideo.hasAudio ? '있음' : '없음'}</strong>
-                    </div>
+                    <button
+                      className="ghost-button small"
+                      onClick={() => window.codexVideoAnalyzer.showItemInFolder(selectedAnalysisVideo.absolutePath)}
+                    >
+                      파일 위치
+                    </button>
+                  </div>
+                  <div className="detail-inline-meta">
+                    <span className="detail-relative-path">
+                      {formatVideoFolderPath(selectedAnalysisVideo.absolutePath, rootFolder)}
+                    </span>
+                    <span className="detail-duration-chip">
+                      {formatDuration(selectedAnalysisVideo.durationSeconds)}
+                    </span>
                   </div>
 
                   <div className="detail-section">
@@ -1077,27 +1058,6 @@ function App() {
                         ),
                       )}
                     </div>
-                  </div>
-
-                  <div className="detail-actions">
-                    <button
-                      className="ghost-button small"
-                      onClick={() => window.codexVideoAnalyzer.showItemInFolder(selectedAnalysisVideo.absolutePath)}
-                    >
-                      파일 위치
-                    </button>
-                    <button
-                      className="ghost-button small"
-                      onClick={() => window.codexVideoAnalyzer.openPath(selectedAnalysisVideo.absolutePath)}
-                    >
-                      외부 앱으로 열기
-                    </button>
-                    <button
-                      className="ghost-button small"
-                      onClick={() => window.codexVideoAnalyzer.openPath(selectedAnalysisVideo.analysisFilePath)}
-                    >
-                      분석 문서 열기
-                    </button>
                   </div>
                 </>
               ) : (
@@ -1214,12 +1174,23 @@ function formatDuration(durationSeconds?: number) {
   return `${durationSeconds.toFixed(1)}초`
 }
 
-function formatResolution(width?: number, height?: number) {
-  if (!width || !height) {
-    return '-'
+function formatVideoFolderPath(absolutePath: string, rootFolder: string) {
+  if (!absolutePath) {
+    return './'
   }
 
-  return `${width}×${height}`
+  const relativePath =
+    rootFolder && absolutePath.startsWith(rootFolder)
+      ? absolutePath.slice(rootFolder.length).replace(/^[\\/]+/, '')
+      : absolutePath
+
+  const segments = relativePath.split(/[\\/]+/).filter(Boolean)
+
+  if (segments.length <= 1) {
+    return './'
+  }
+
+  return `${segments.slice(0, -1).join('/')}/`
 }
 
 function areAnalysisPrerequisitesReady(environment: EnvironmentStatus | null) {

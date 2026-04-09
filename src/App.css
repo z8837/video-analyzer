@@ -460,7 +460,7 @@
 .primary-button,
 .danger-button,
 .ghost-button {
-  padding: 11px 16px;
+  padding: 4px 5px;
   border: 1px solid transparent;
   font-size: 0.9rem;
   font-weight: 700;
@@ -502,7 +502,7 @@
 .ghost-button.small,
 .primary-button.small,
 .danger-button.small {
-  padding: 8px 12px;
+  padding: 4px 6px;
   border-radius: 12px;
   font-size: 0.8rem;
 }
@@ -1019,13 +1019,64 @@
   letter-spacing: -0.04em;
 }
 
+.detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.detail-header-text {
+  min-width: 0;
+}
+
+.detail-header .ghost-button {
+  flex: 0 0 88px;
+  width: 88px;
+  text-align: center;
+}
+
 .detail-file-name {
-  margin: -8px 0 2px;
+  margin: 4px 0 0;
   color: #6f8198;
   font-size: 0.84rem;
   font-weight: 700;
   line-height: 1.5;
   word-break: break-all;
+}
+
+.detail-inline-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: -2px;
+}
+
+.detail-relative-path {
+  min-width: 0;
+  color: #6a7d96;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.detail-duration-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 10px;
+  border: 1px solid rgba(128, 149, 178, 0.18);
+  border-radius: 999px;
+  background: #f2f6fb;
+  color: #576c87;
+  font-size: 0.75rem;
+  font-weight: 800;
+  line-height: 1.2;
+  flex-shrink: 0;
 }
 
 .detail-player {
@@ -1038,34 +1089,6 @@
     linear-gradient(180deg, rgba(9, 18, 33, 0.12), rgba(9, 18, 33, 0.4)),
     #0d1522;
   box-shadow: 0 18px 34px rgba(24, 39, 66, 0.18);
-}
-
-.detail-meta {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.meta-item {
-  display: grid;
-  gap: 4px;
-  padding: 12px 14px;
-  border: 1px solid rgba(153, 170, 192, 0.14);
-  border-radius: 16px;
-  background: linear-gradient(180deg, #f6f9fc, #eef3f8);
-}
-
-.meta-item span {
-  color: var(--text-muted);
-  font-size: 0.72rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-}
-
-.meta-item strong {
-  color: var(--text-strong);
-  font-size: 0.95rem;
-  font-weight: 800;
 }
 
 .detail-section {
@@ -1416,6 +1439,11 @@
 
   .detail-meta {
     grid-template-columns: 1fr;
+  }
+
+  .detail-header {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .detail-player {
