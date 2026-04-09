@@ -33,10 +33,16 @@ function VideoThumbnail({
   videoUrl,
   sampleImageUrl,
   title,
+  badgeText,
+  badgeVariant,
+  durationText,
 }: {
   videoUrl: string
   sampleImageUrl?: string
   title: string
+  badgeText?: string
+  badgeVariant?: 'preview' | 'filename'
+  durationText?: string
 }) {
   const handleLoadedMetadata = (event: SyntheticEvent<HTMLVideoElement>) => {
     const element = event.currentTarget
@@ -59,6 +65,10 @@ function VideoThumbnail({
       style={sampleImageUrl ? { backgroundImage: `url("${sampleImageUrl}")` } : undefined}
       aria-label={title}
     >
+      {badgeText && (
+        <span className={`video-thumb-badge ${badgeVariant ?? 'preview'}`}>{badgeText}</span>
+      )}
+      {durationText && <span className="video-thumb-duration">{durationText}</span>}
       {!sampleImageUrl && videoUrl && (
         <video
           key={videoUrl}
@@ -138,7 +148,7 @@ function FolderTreeBranch({
 }
 
 function App() {
-  const [viewMode, setViewMode] = useState<ViewMode>('folders')
+  const [viewMode, setViewMode] = useState<ViewMode>('library')
   const [settings, setSettings] = useState<ToolSettings | null>(null)
   const [draftSettings, setDraftSettings] = useState<ToolSettings | null>(null)
   const [environment, setEnvironment] = useState<EnvironmentStatus | null>(null)
@@ -580,18 +590,18 @@ function App() {
 
         <nav className="sidebar-nav">
           <button
-            className={`nav-item ${viewMode === 'folders' ? 'active' : ''}`}
-            onClick={() => setViewMode('folders')}
-          >
-            <span className="nav-icon">📂</span>
-            폴더 탐색
-          </button>
-          <button
             className={`nav-item ${viewMode === 'library' ? 'active' : ''}`}
             onClick={() => setViewMode('library')}
           >
             <span className="nav-icon">📊</span>
             분석 라이브러리
+          </button>
+          <button
+            className={`nav-item ${viewMode === 'folders' ? 'active' : ''}`}
+            onClick={() => setViewMode('folders')}
+          >
+            <span className="nav-icon">📂</span>
+            폴더 탐색
           </button>
         </nav>
 
@@ -812,14 +822,18 @@ function App() {
                       videoUrl={video.videoUrl}
                       sampleImageUrl={video.sampleImageUrl}
                       title={video.title}
+                      badgeText="미리보기"
+                      badgeVariant="preview"
+                      durationText={formatDuration(video.durationSeconds)}
                     />
                     <div className="video-card-body">
                       <div className="video-card-top">
-                        <strong>{video.analyzed ? video.title : video.fileName}</strong>
+                        <strong>{video.title}</strong>
                         <span className={`status-badge ${video.analyzed ? 'analyzed' : 'pending'}`}>
                           {video.analyzed ? '분석됨' : '미분석'}
                         </span>
                       </div>
+                      <span className="video-card-file-name">{video.fileName}</span>
                       <p>
                         {video.analyzed
                           ? video.summary
@@ -849,6 +863,7 @@ function App() {
                   />
 
                   <h2>{selectedVideo?.title || selectedVideo?.fileName || '영상 정보'}</h2>
+                  <p className="detail-file-name">{selectedVideo.fileName}</p>
 
                   <div className="detail-meta">
                     <div className="meta-item">
@@ -968,20 +983,26 @@ function App() {
                       videoUrl={video.videoUrl}
                       sampleImageUrl={video.sampleImageUrl}
                       title={video.title}
+                      badgeText={video.fileName}
+                      badgeVariant="filename"
+                      durationText={formatDuration(video.durationSeconds)}
                     />
                     <div className="lib-card-body">
                       <strong>{video.title}</strong>
                       <span className="lib-card-meta">
                         {video.relativePath} · {formatDuration(video.durationSeconds)}
                       </span>
-                      <p>{video.summary}</p>
-                      <div className="pill-row">
-                        {video.categories.slice(0, 3).map((category) => (
-                          <span key={`${video.absolutePath}-${category}`} className="mini-pill">
-                            {category}
-                          </span>
-                        ))}
-                      </div>
+                      {video.keywords.length > 0 ? (
+                        <div className="pill-row">
+                          {video.keywords.slice(0, 4).map((keyword) => (
+                            <span key={`${video.absolutePath}-${keyword}`} className="mini-pill">
+                              {keyword}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="lib-card-empty-keywords">키워드 없음</span>
+                      )}
                     </div>
                   </button>
                 ))}
@@ -1010,6 +1031,7 @@ function App() {
                   />
 
                   <h2>{selectedAnalysisVideo.title}</h2>
+                  <p className="detail-file-name">{selectedAnalysisVideo.fileName}</p>
 
                   <div className="detail-meta">
                     <div className="meta-item">
