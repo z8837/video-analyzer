@@ -28,10 +28,12 @@ Permanent outputs:
 Pre-extracted metadata:
 - The task file already contains `metadata` for each pending video with `durationSeconds`, `width`, `height`, `fps`, and `hasAudio`.
 - Do NOT run `ffprobe` yourself. Use the provided metadata directly.
+- Some task items also include `sampleTimesSeconds`, a short list of recommended timeline points for frame extraction.
 
 Allowed temporary work:
 - You may use `ffmpeg` to extract a small number of temporary frames for visual inspection if needed.
 - Prefer 2–4 representative frames per video, scaled down (e.g. `-vf scale=540:-1`).
+- If `sampleTimesSeconds` is provided, prefer those timestamps when extracting frames and when assigning `keywordMoments`.
 - If you create temporary files for inspection, keep them outside the permanent library when possible and clean them up before finishing.
 
 Forbidden tools and approaches:
@@ -67,6 +69,10 @@ Required JSON fields:
   "details": ["장면 설명 1", "장면 설명 2"],
   "categories": ["태그1", "태그2"],
   "keywords": ["검색어1", "검색어2"],
+  "keywordMoments": [
+    { "label": "검색어1", "timeSeconds": 1.2 },
+    { "label": "검색어2", "timeSeconds": 4.8 }
+  ],
   "durationSeconds": 8.42,
   "width": 2160,
   "height": 3840,
@@ -87,6 +93,13 @@ Field rules:
 - `details`: 2 to 6 concrete Korean scene descriptions.
 - `categories`: 1 to 5 short Korean tags.
 - `keywords`: 2 to 8 searchable Korean keywords.
+- `keywordMoments`: 2 to 8 objects with the same keyword labels and an approximate appearance time in seconds.
+- Keep each `timeSeconds` within the video duration and round to one decimal place when possible.
+- If a keyword is visible from the beginning, `0` is acceptable.
+- `keywordMoments` should be useful jump anchors for the player, not just generic labels anchored at `0`.
+- For clips longer than 3 seconds, avoid assigning multiple keywords to `0` unless the scene truly stays unchanged for the whole clip.
+- If a keyword is visible for most of the clip, prefer the first clearly readable moment after the opening instant, usually around `0.8` to `1.5` seconds for longer clips.
+- Prefer keywords tied to identifiable scene elements or moments that help the user jump to a meaningful point in time.
 - `durationSeconds`, `width`, `height`, `fps`, `hasAudio`: fill from metadata when possible.
 - `sampleImage`: use an empty string unless a permanent sample image was explicitly requested.
 - `generatedAt`: current timestamp in ISO 8601 format.
@@ -109,8 +122,10 @@ Workflow:
 1. Read the task file path provided in the prompt.
 2. For each pending video:
    - use the pre-extracted `metadata` from the task file for durationSeconds, width, height, fps, hasAudio,
+   - use `sampleTimesSeconds` from the task file when available to inspect multiple points in the timeline,
    - extract only a few representative frames with `ffmpeg` if needed for visual description,
-   - prepare one analysis object for the final JSON response.
+   - prepare one analysis object for the final JSON response,
+   - choose `keywordMoments` that work well as jump targets rather than putting most keywords at `0`.
 3. Do not rewrite unrelated existing markdown files.
 4. Do not save the final analysis text through shell-written files.
 5. Keep the final response short and machine-readable.
@@ -134,6 +149,10 @@ Final response:
       "details": ["장면 설명 1", "장면 설명 2"],
       "categories": ["태그1", "태그2"],
       "keywords": ["검색어1", "검색어2"],
+      "keywordMoments": [
+        { "label": "검색어1", "timeSeconds": 1.2 },
+        { "label": "검색어2", "timeSeconds": 4.8 }
+      ],
       "durationSeconds": 8.42,
       "width": 2160,
       "height": 3840,

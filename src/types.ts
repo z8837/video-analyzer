@@ -69,6 +69,11 @@ export interface FolderVideoItem {
   analysisFilePath?: string
 }
 
+export interface KeywordMoment {
+  label: string
+  timeSeconds: number | null
+}
+
 export interface AnalysisVideo {
   fileName: string
   relativePath: string
@@ -83,6 +88,7 @@ export interface AnalysisVideo {
   details: string[]
   categories: string[]
   keywords: string[]
+  keywordMoments: KeywordMoment[]
   sampleImage?: string
   analysisFile?: string
   skippedFromExisting?: boolean

@@ -584,6 +584,7 @@ async function buildAnalysisVideo(projectRootPath, analyzeDir, entry) {
     details: entry.record.details,
     categories: entry.record.categories,
     keywords: entry.record.keywords,
+    keywordMoments: entry.record.keywordMoments || [],
     sampleImage: entry.record.sampleImage || '',
     analysisFile: toPosixPath(path.relative(analyzeDir, entry.markdownPath)),
     skippedFromExisting: false,
@@ -797,12 +798,18 @@ function buildPromptWithContext(projectRootPath, sourceFolderPath, resumeContext
     'Do not create or update any markdown files yourself.',
     'Do not create or update analyze/results.json, analyze/index.md, preview videos, or permanent sample-sheet images.',
     'Each pending video in the task file has a pre-extracted "metadata" object with durationSeconds, width, height, fps, hasAudio. Use it directly instead of running ffprobe.',
+    'Each pending video may also include sampleTimesSeconds. Use those timeline points when you extract representative frames.',
     'Keep the workflow short: extract a few representative frames with ffmpeg if needed, then describe what you see.',
     'On Windows, never embed Korean literals inside PowerShell command strings or here-strings.',
     'Keep Korean text only in your final response JSON. The desktop app will write the UTF-8 markdown files for you.',
     'Your final response must be exactly one JSON object and nothing else.',
     'Use this shape: {"schemaVersion":1,"message":"짧은 한국어 완료 문장","analyses":[...]}',
-    'Each analyses item must contain source, fileName, title, summary, details, categories, keywords, durationSeconds, width, height, fps, hasAudio, sampleImage, generatedAt, model, reasoningEffort.',
+    'Include keywordMoments with approximate seconds for each keyword so the desktop app can jump the player to that scene.',
+    'keywordMoments must be useful jump anchors, not just default 0-second tags.',
+    'For clips longer than 3 seconds, do not set multiple keywordMoments to 0 unless the scene truly stays unchanged and no better anchor exists.',
+    'If an object is visible for the whole clip, prefer the first clearly readable moment after the opening instant, usually around 0.8 to 1.5 seconds for longer clips.',
+    'Prefer keywords tied to distinct scene elements or moments that help the user jump to a meaningful point in the timeline.',
+    'Each analyses item must contain source, fileName, title, summary, details, categories, keywords, keywordMoments, durationSeconds, width, height, fps, hasAudio, sampleImage, generatedAt, model, reasoningEffort.',
     'The analyses array must contain one item for every pending video from the task file and source must exactly match the task file.',
   ].join('\n')
 }
@@ -1483,9 +1490,26 @@ async function enrichPendingVideosWithMetadata(resumeContext, settings, sourceFo
       const metadata = await probeVideoMetadata(videoPath, ffprobeCommand, env)
       if (metadata) {
         pendingVideo.metadata = metadata
+        pendingVideo.sampleTimesSeconds = buildSuggestedSampleTimes(metadata.durationSeconds)
       }
     }),
   )
+}
+
+function buildSuggestedSampleTimes(durationSeconds) {
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+    return []
+  }
+
+  const rawCandidates = durationSeconds <= 3
+    ? [0.4, durationSeconds * 0.4, Math.max(durationSeconds - 0.4, 0.6)]
+    : [0.8, durationSeconds * 0.25, durationSeconds * 0.5, durationSeconds * 0.75, durationSeconds - 0.8]
+
+  const rounded = rawCandidates
+    .map((seconds) => Math.max(0, Math.min(durationSeconds, Math.round(seconds * 10) / 10)))
+    .filter((seconds) => seconds < durationSeconds)
+
+  return [...new Set(rounded)].sort((left, right) => left - right)
 }
 
 async function startAnalysis(sourceFolderPath) {

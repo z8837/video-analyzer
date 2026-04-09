@@ -288,7 +288,7 @@
   min-width: 0;
   min-height: 0;
   height: 100%;
-  padding: 26px;
+  padding: 10px;
   overflow: hidden;
   background:
     radial-gradient(circle at 100% 0%, rgba(115, 214, 219, 0.14), transparent 18%),
@@ -625,6 +625,24 @@
 .mini-pill.clickable:hover {
   background: #e8eef6;
   border-color: rgba(92, 118, 151, 0.28);
+}
+
+.jump-pill {
+  justify-content: space-between;
+  text-align: left;
+}
+
+.jump-pill-time {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(84, 108, 138, 0.12);
+  color: #3f5672;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1.2;
 }
 
 .status-badge {
@@ -1109,6 +1127,20 @@
   text-transform: uppercase;
 }
 
+.detail-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.detail-section-note {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
 .detail-section p,
 .detail-section ul {
   margin: 0;
@@ -1341,7 +1373,7 @@
   }
 
   .main-area {
-    padding: 18px;
+    padding: 5px;
   }
 
   .folder-view {

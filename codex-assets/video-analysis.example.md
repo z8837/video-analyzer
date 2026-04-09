@@ -14,6 +14,12 @@
   ],
   "categories": ["음식", "실내", "근접 촬영"],
   "keywords": ["접시", "식사", "숟가락", "반찬"],
+  "keywordMoments": [
+    { "label": "접시", "timeSeconds": 0.3 },
+    { "label": "식사", "timeSeconds": 1.1 },
+    { "label": "숟가락", "timeSeconds": 2.4 },
+    { "label": "반찬", "timeSeconds": 4.8 }
+  ],
   "durationSeconds": 8.42,
   "width": 2160,
   "height": 3840,
@@ -45,3 +51,4 @@
 ## 태그
 - 카테고리: 음식, 실내, 근접 촬영
 - 키워드: 접시, 식사, 숟가락, 반찬
+- 키워드 시점: 접시 @ 0.3초, 식사 @ 1.1초, 숟가락 @ 2.4초, 반찬 @ 4.8초

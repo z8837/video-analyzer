@@ -204,6 +204,22 @@ function normalizeStringArray(value) {
   return []
 }
 
+function uniqueStrings(values) {
+  const seen = new Set()
+  const normalized = []
+
+  for (const value of values) {
+    if (!value || seen.has(value)) {
+      continue
+    }
+
+    seen.add(value)
+    normalized.push(value)
+  }
+
+  return normalized
+}
+
 function normalizeBoolean(value) {
   if (typeof value === 'boolean') {
     return value
@@ -235,6 +251,70 @@ function normalizeNumber(value) {
   return null
 }
 
+function normalizeKeywordMoment(value) {
+  if (typeof value === 'string') {
+    const label = value.trim()
+    return label ? { label, timeSeconds: null } : null
+  }
+
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const label = (
+    value.label ||
+    value.keyword ||
+    value.name ||
+    value.text ||
+    ''
+  )
+    .toString()
+    .trim()
+
+  if (!label) {
+    return null
+  }
+
+  const rawTime =
+    value.timeSeconds ??
+    value.seconds ??
+    value.time ??
+    value.timestampSeconds ??
+    null
+  const normalizedTime = normalizeNumber(rawTime)
+
+  return {
+    label,
+    timeSeconds:
+      normalizedTime == null ? null : Math.max(0, Math.round(normalizedTime * 10) / 10),
+  }
+}
+
+function normalizeKeywordMoments(value) {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  const moments = []
+  const seen = new Set()
+
+  for (const item of value) {
+    const normalized = normalizeKeywordMoment(item)
+    if (!normalized || seen.has(normalized.label)) {
+      continue
+    }
+
+    seen.add(normalized.label)
+    moments.push(normalized)
+
+    if (moments.length >= 8) {
+      break
+    }
+  }
+
+  return moments
+}
+
 export function isLikelyCorruptedText(value) {
   return typeof value === 'string' && /\?{3,}/.test(value) && !/[가-힣]/.test(value)
 }
@@ -260,7 +340,12 @@ export function normalizeAnalysisRecord(raw, defaults = {}, options = {}) {
     '영상 내용을 요약하지 못했습니다.'
   let details = normalizeStringArray(raw.details).slice(0, 12)
   let categories = normalizeStringArray(raw.categories).slice(0, 5)
-  let keywords = normalizeStringArray(raw.keywords).slice(0, 8)
+  let keywordMoments = normalizeKeywordMoments(raw.keywordMoments)
+  let keywords = uniqueStrings([
+    ...keywordMoments.map((keywordMoment) => keywordMoment.label),
+    ...normalizeStringArray(raw.keywords),
+  ]).slice(0, 8)
+  keywordMoments = keywordMoments.filter((keywordMoment) => keywords.includes(keywordMoment.label))
   const searchableText = [title, summary, ...details, ...categories, ...keywords].join(' ')
   const corruptedText = isLikelyCorruptedText(searchableText)
 
@@ -277,6 +362,7 @@ export function normalizeAnalysisRecord(raw, defaults = {}, options = {}) {
     details = ['기존 분석 마크다운의 본문이 물음표로 손상되어 장면 설명을 복구하지 못했습니다.']
     categories = []
     keywords = []
+    keywordMoments = []
   }
 
   return {
@@ -291,6 +377,7 @@ export function normalizeAnalysisRecord(raw, defaults = {}, options = {}) {
     details,
     categories,
     keywords,
+    keywordMoments,
     durationSeconds: normalizeNumber(raw.durationSeconds),
     width: normalizeNumber(raw.width),
     height: normalizeNumber(raw.height),
@@ -351,6 +438,30 @@ function extractSectionBody(markdown, headings) {
   return ''
 }
 
+function parseKeywordMomentsLine(value) {
+  if (!value) {
+    return []
+  }
+
+  return normalizeKeywordMoments(
+    value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .map((item) => {
+        const match = item.match(/^(.*?)\s*(?:@|\()\s*([\d.]+)\s*초\)?$/)
+        if (!match?.[1]) {
+          return item
+        }
+
+        return {
+          label: match[1].trim(),
+          timeSeconds: Number(match[2]),
+        }
+      }),
+  )
+}
+
 export function parseLegacyMarkdown(markdown) {
   const titleMatch = markdown.match(/^#\s+(.+)$/m)
   if (!titleMatch?.[1]) {
@@ -371,6 +482,7 @@ export function parseLegacyMarkdown(markdown) {
   const detailsSection = extractSectionBody(markdown, ['눈에 띄는 장면', '세부 설명'])
   const categoryLine = extractLabeledValue(markdown, ['카테고리'])
   const keywordLine = extractLabeledValue(markdown, ['키워드'])
+  const keywordMomentLine = extractLabeledValue(markdown, ['키워드 시점', '키워드 시간'])
   const durationLine = extractLabeledValue(markdown, ['길이'])
   const widthHeightLine = extractLabeledValue(markdown, ['해상도'])
   const fpsLine = extractLabeledValue(markdown, ['FPS'])
@@ -397,6 +509,7 @@ export function parseLegacyMarkdown(markdown) {
       .split(',')
       .map((item) => item.trim())
       .filter(Boolean),
+    keywordMoments: parseKeywordMomentsLine(keywordMomentLine),
     durationSeconds: durationMatch ? Number(durationMatch[1]) : null,
     width: sizeMatch ? Number(sizeMatch[1]) : null,
     height: sizeMatch ? Number(sizeMatch[2]) : null,
@@ -415,6 +528,7 @@ export function buildMarkdownFromRecord(record) {
     details: record.details,
     categories: record.categories,
     keywords: record.keywords,
+    keywordMoments: record.keywordMoments || [],
     durationSeconds: record.durationSeconds,
     width: record.width,
     height: record.height,
@@ -452,6 +566,15 @@ export function buildMarkdownFromRecord(record) {
     '## 태그',
     `- 카테고리: ${record.categories.join(', ') || '없음'}`,
     `- 키워드: ${record.keywords.join(', ') || '없음'}`,
+    `- 키워드 시점: ${
+      (record.keywordMoments || [])
+        .map((keywordMoment) =>
+          keywordMoment.timeSeconds == null
+            ? keywordMoment.label
+            : `${keywordMoment.label} @ ${keywordMoment.timeSeconds.toFixed(1)}초`,
+        )
+        .join(', ') || '없음'
+    }`,
     '',
   ].join('\n')
 }
