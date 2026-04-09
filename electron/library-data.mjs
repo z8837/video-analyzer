@@ -152,6 +152,42 @@ export async function collectFolderTree(rootPath) {
   return visit(rootPath)
 }
 
+export async function collectProjectVideoFiles(rootPath) {
+  const collected = []
+
+  async function visit(folderPath) {
+    const entries = await fs.readdir(folderPath, { withFileTypes: true })
+    const sortedEntries = entries.sort((left, right) => left.name.localeCompare(right.name))
+
+    for (const entry of sortedEntries) {
+      const entryPath = path.join(folderPath, entry.name)
+
+      if (entry.isDirectory() && !entry.isSymbolicLink()) {
+        if (!IGNORED_FOLDERS.has(entry.name)) {
+          await visit(entryPath)
+        }
+        continue
+      }
+
+      if (!entry.isFile() || !isVideoFileName(entry.name)) {
+        continue
+      }
+
+      const source = toPosixPath(path.relative(rootPath, entryPath))
+      collected.push({
+        fileName: entry.name,
+        absolutePath: entryPath,
+        source,
+        folderRelativePath:
+          path.posix.dirname(source) === '.' ? '.' : path.posix.dirname(source),
+      })
+    }
+  }
+
+  await visit(rootPath)
+  return collected
+}
+
 export async function readTextIfExists(filePath) {
   try {
     return await fs.readFile(filePath, 'utf8')

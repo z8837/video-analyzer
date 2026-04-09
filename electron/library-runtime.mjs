@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import {
+  collectProjectVideoFiles,
   extractJsonFence,
   fileExists,
   getAnalyzeAssetRelativePaths,
@@ -261,8 +262,72 @@ export async function readLibraryEntries(projectRootPath) {
   }
 }
 
+function cloneEntryWithResolvedVideo(entry, resolvedVideo) {
+  return {
+    ...entry,
+    record: {
+      ...entry.record,
+      source: resolvedVideo.source,
+      fileName: resolvedVideo.fileName,
+      folderRelativePath: resolvedVideo.folderRelativePath,
+    },
+  }
+}
+
+export async function readResolvedLibraryEntries(projectRootPath) {
+  const { entries, generatedAt } = await readLibraryEntries(projectRootPath)
+  const projectVideos = await collectProjectVideoFiles(projectRootPath)
+  const projectVideoBySource = new Map(projectVideos.map((video) => [video.source, video]))
+  const usedSources = new Set()
+  const unresolvedEntries = []
+  const resolvedEntries = []
+
+  for (const entry of entries) {
+    const exactVideo = projectVideoBySource.get(entry.record.source)
+    if (exactVideo) {
+      usedSources.add(exactVideo.source)
+      resolvedEntries.push(entry)
+      continue
+    }
+
+    unresolvedEntries.push(entry)
+  }
+
+  const remainingByFileName = new Map()
+  for (const video of projectVideos) {
+    if (usedSources.has(video.source)) {
+      continue
+    }
+
+    const candidates = remainingByFileName.get(video.fileName) ?? []
+    candidates.push(video)
+    remainingByFileName.set(video.fileName, candidates)
+  }
+
+  for (const entry of unresolvedEntries) {
+    const candidates = remainingByFileName.get(entry.record.fileName) ?? []
+
+    if (candidates.length === 1) {
+      const [resolvedVideo] = candidates
+      usedSources.add(resolvedVideo.source)
+      remainingByFileName.delete(entry.record.fileName)
+      resolvedEntries.push(cloneEntryWithResolvedVideo(entry, resolvedVideo))
+      continue
+    }
+
+    resolvedEntries.push(entry)
+  }
+
+  return {
+    entries: resolvedEntries.sort((left, right) =>
+      left.record.source.localeCompare(right.record.source, 'ko'),
+    ),
+    generatedAt,
+  }
+}
+
 export async function getResumeContext(projectRootPath, sourceFolderPath) {
-  const { entries } = await readLibraryEntries(projectRootPath)
+  const { entries } = await readResolvedLibraryEntries(projectRootPath)
   const existingByPath = new Map(entries.map((entry) => [entry.record.source, entry]))
   const directVideoFiles = await listDirectVideoFiles(sourceFolderPath)
   const folderRelativePath = getFolderRelativePath(projectRootPath, sourceFolderPath)

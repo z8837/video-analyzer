@@ -23,6 +23,7 @@ import {
   getCompletedPendingSources,
   getResumeContext,
   readLibraryEntries,
+  readResolvedLibraryEntries,
   writePendingAnalysesFromReport,
   writeTaskFile,
 } from './library-runtime.mjs'
@@ -635,7 +636,7 @@ async function loadFolderVideos(projectRootPath, folderPath) {
   }
 
   const { analyzeDir } = getAnalyzePaths(projectRootPath)
-  const { entries } = await readLibraryEntries(projectRootPath)
+  const { entries } = await readResolvedLibraryEntries(projectRootPath)
   const analysisBySource = new Map(entries.map((entry) => [entry.record.source, entry]))
   const folderRelativePath = getFolderRelativePath(projectRootPath, folderPath)
   const directVideoFiles = await listDirectVideoFiles(folderPath)
@@ -680,7 +681,7 @@ async function loadAnalysis(projectRootPath) {
   }
 
   const { analyzeDir } = getAnalyzePaths(projectRootPath)
-  const { entries, generatedAt } = await readLibraryEntries(projectRootPath)
+  const { entries, generatedAt } = await readResolvedLibraryEntries(projectRootPath)
   const videos = await Promise.all(
     entries.map((entry) => buildAnalysisVideo(projectRootPath, analyzeDir, entry)),
   )
