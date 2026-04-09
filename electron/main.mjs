@@ -306,6 +306,45 @@ async function getHomebrewPrefix(brewCommand, env) {
   return result.ok ? result.stdout.trim() : ''
 }
 
+async function installCodexIfNeeded(currentSettings, actions = [], issues = []) {
+  let settings = currentSettings
+  const initialEnvironment = await getEnvironmentStatus(settings)
+  if (initialEnvironment.checks.codex.ok) {
+    return { settings, environment: initialEnvironment }
+  }
+
+  if (process.platform !== 'darwin') {
+    issues.push('이 운영체제에서는 Codex 자동 설치를 지원하지 않습니다. Codex CLI를 직접 설치해 주세요.')
+    return { settings, environment: initialEnvironment }
+  }
+
+  const env = buildChildEnv(settings)
+  const brewCommand = await resolveHomebrewCommand(env)
+  if (!brewCommand) {
+    issues.push('Homebrew를 찾지 못해 Codex를 자동 설치하지 못했습니다. Homebrew 설치 후 다시 시도해 주세요.')
+    return { settings, environment: initialEnvironment }
+  }
+
+  actions.push('Codex CLI가 없어 Homebrew로 자동 설치를 시도합니다.')
+  const installResult = await runCommand(brewCommand, ['install', '--cask', 'codex'], env)
+  if (!installResult.ok) {
+    issues.push(
+      `Codex 자동 설치에 실패했습니다. ${summarizeCommandFailure(installResult, 'brew install --cask codex가 실패했습니다.')}`,
+    )
+    return { settings, environment: initialEnvironment }
+  }
+
+  const resolvedCodexPath = await resolveExecutablePath('codex', buildChildEnv(settings))
+  if (resolvedCodexPath && resolvedCodexPath !== settings.codexCommand) {
+    settings = await updateSettingsWithPatch(settings, { codexCommand: resolvedCodexPath })
+    actions.push(`Codex CLI를 설치하고 ${resolvedCodexPath}로 설정했습니다.`)
+  } else {
+    actions.push('Codex CLI 설치를 완료했습니다.')
+  }
+
+  return { settings, environment: await getEnvironmentStatus(settings) }
+}
+
 async function installFfmpegIfNeeded(currentSettings, actions = [], issues = []) {
   let settings = currentSettings
   const initialEnvironment = await getEnvironmentStatus(settings)
@@ -360,8 +399,11 @@ function collectEnvironmentIssues(environment, initialIssues = []) {
     issues.push(`Codex CLI 확인 필요: ${environment.checks.codex.detail}`)
   }
 
-  if (!environment.checks.chatgptLogin.ok) {
-    issues.push('Codex 로그인 필요: 터미널에서 codex login을 완료한 뒤 다시 점검해 주세요.')
+  if (
+    !environment.checks.chatgptLogin.ok &&
+    !issues.some((issue) => issue.startsWith('Codex 로그인'))
+  ) {
+    issues.push('Codex 로그인 필요: 저장 및 점검을 눌러 로그인 창을 연 뒤 다시 점검해 주세요.')
   }
 
   if (!environment.checks.ffmpeg.ok) {
@@ -409,9 +451,25 @@ async function prepareEnvironment(patch = {}) {
   let settings = await saveSettings(patch)
   settings = await resolveToolCommandSettings(settings, actions)
 
-  const prepared = await installFfmpegIfNeeded(settings, actions, installIssues)
-  settings = await resolveToolCommandSettings(prepared.settings, actions)
-  const environment = await getEnvironmentStatus(settings)
+  const codexPrepared = await installCodexIfNeeded(settings, actions, installIssues)
+  settings = await resolveToolCommandSettings(codexPrepared.settings, actions)
+
+  const ffmpegPrepared = await installFfmpegIfNeeded(settings, actions, installIssues)
+  settings = await resolveToolCommandSettings(ffmpegPrepared.settings, actions)
+
+  let environment = await getEnvironmentStatus(settings)
+  if (environment.checks.codex.ok && !environment.checks.chatgptLogin.ok) {
+    const { opened, issue } = await openCodexLoginWindow(settings)
+    if (opened) {
+      actions.push('Codex 로그인 창을 열었습니다.')
+      installIssues.push('Codex 로그인 창을 열었습니다. 로그인 완료 후 다시 저장 및 점검해 주세요.')
+    } else if (issue) {
+      installIssues.push(`Codex 로그인 창을 열지 못했습니다. ${issue}`)
+    }
+
+    environment = await getEnvironmentStatus(settings)
+  }
+
   const issues = collectEnvironmentIssues(environment, installIssues)
 
   return {
@@ -421,6 +479,44 @@ async function prepareEnvironment(patch = {}) {
     issues,
     message: buildPreparationMessage(actions, issues, environment),
   }
+}
+
+function escapeAppleScriptString(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
+function buildCodexLoginCommand(settings) {
+  const env = buildChildEnv(settings)
+  const prefix = env.PATH ? `env PATH=${shellEscape(env.PATH)} ` : ''
+  return `${prefix}${shellEscape(settings.codexCommand)} login`
+}
+
+async function openCodexLoginWindow(settings) {
+  if (process.platform !== 'darwin') {
+    return {
+      opened: false,
+      issue: '이 운영체제에서는 로그인 창 자동 열기를 지원하지 않습니다. 터미널에서 codex login을 실행해 주세요.',
+    }
+  }
+
+  const loginCommand = buildCodexLoginCommand(settings)
+  const script = [
+    'tell application "Terminal"',
+    '  activate',
+    `  do script "${escapeAppleScriptString(loginCommand)}"`,
+    'end tell',
+  ].join('\n')
+  const result = await runCommand('/usr/bin/osascript', ['-e', script], buildChildEnv(settings))
+
+  return result.ok
+    ? { opened: true, issue: '' }
+    : {
+        opened: false,
+        issue: summarizeCommandFailure(
+          result,
+          'Terminal에서 codex login 창을 여는 데 실패했습니다.',
+        ),
+      }
 }
 
 function buildFileUrl(filePath, cacheKey = '') {

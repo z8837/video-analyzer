@@ -64,7 +64,9 @@ npm run dist:mac
    - macOS에서 Finder로 앱을 열었을 때 PATH가 잡히지 않으면 절대경로를 넣으세요.
    - 예: `/opt/homebrew/bin/codex`, `/opt/homebrew/bin/ffmpeg`
 3. `저장 및 점검`을 누르면 도구 경로를 저장하고 상태를 다시 점검합니다.
+   - macOS에서는 `Codex CLI`가 없을 때 Homebrew로 `codex` 자동 설치를 시도합니다.
    - macOS에서는 `ffmpeg` 또는 `ffprobe`가 없을 때 Homebrew로 `ffmpeg` 자동 설치를 시도합니다.
+   - `Codex` 로그인 상태가 아니면 Terminal에서 `codex login`을 실행하는 로그인 창을 엽니다.
    - `Codex`, `ChatGPT 로그인`, `ffmpeg`, `ffprobe`가 모두 준비되지 않으면 분석 버튼은 비활성화됩니다.
 4. `라이브러리 선택`으로 영상 폴더들의 상위 루트를 고릅니다.
 5. 왼쪽 목록에서 분석할 폴더 하나를 선택합니다.
