@@ -990,7 +990,7 @@ function App() {
                     <div className="lib-card-body">
                       <strong>{video.title}</strong>
                       <span className="lib-card-meta">
-                        {video.relativePath} · {formatDuration(video.durationSeconds)}
+                        {video.relativePath}
                       </span>
                       {video.keywords.length > 0 ? (
                         <div className="pill-row">
