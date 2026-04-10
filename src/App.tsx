@@ -50,6 +50,8 @@ const EMPTY_PROGRESS: AnalysisProgress = {
 
 function App() {
   const [viewMode, setViewMode] = useState<ViewMode>('library')
+  const [hasVisitedFolders, setHasVisitedFolders] = useState(false)
+  const [hasVisitedLibrary, setHasVisitedLibrary] = useState(true)
   const [settings, setSettings] = useState<ToolSettings | null>(null)
   const [draftSettings, setDraftSettings] = useState<ToolSettings | null>(null)
   const [environment, setEnvironment] = useState<EnvironmentStatus | null>(null)
@@ -517,6 +519,17 @@ function App() {
     }
   }
 
+  const handleSelectViewMode = useCallback((nextMode: ViewMode) => {
+    if (nextMode === 'folders') {
+      setHasVisitedFolders(true)
+    } else if (nextMode === 'library') {
+      setHasVisitedLibrary(true)
+    }
+    startTransition(() => {
+      setViewMode(nextMode)
+    })
+  }, [])
+
   const handleVideoFileDragStart = useCallback(
     (event: DragEvent<HTMLButtonElement>, filePath: string, iconPath = '') => {
       if (!filePath) {
@@ -557,14 +570,14 @@ function App() {
         <nav className="sidebar-nav">
           <button
             className={`nav-item ${viewMode === 'library' ? 'active' : ''}`}
-            onClick={() => setViewMode('library')}
+            onClick={() => handleSelectViewMode('library')}
           >
             <span className="nav-icon">📊</span>
             분석 라이브러리
           </button>
           <button
             className={`nav-item ${viewMode === 'folders' ? 'active' : ''}`}
-            onClick={() => setViewMode('folders')}
+            onClick={() => handleSelectViewMode('folders')}
           >
             <span className="nav-icon">📂</span>
             폴더 탐색
@@ -796,7 +809,11 @@ function App() {
           </section>
         )}
 
-        {viewMode === 'folders' && (
+        {hasVisitedFolders && (
+          <div
+            className="view-host"
+            style={{ display: viewMode === 'folders' ? 'contents' : 'none' }}
+          >
           <FolderExplorerPage
             folderTree={folderTree}
             expandedPathSet={expandedPathSet}
@@ -828,9 +845,14 @@ function App() {
             formatVideoFolderPath={formatVideoFolderPath}
             getKeywordJumpTargets={getKeywordJumpTargets}
           />
+          </div>
         )}
 
-        {viewMode === 'library' && (
+        {hasVisitedLibrary && (
+          <div
+            className="view-host"
+            style={{ display: viewMode === 'library' ? 'contents' : 'none' }}
+          >
           <AnalysisLibraryPage
             analysis={analysis}
             filteredAnalysisVideos={filteredAnalysisVideos}
@@ -853,6 +875,7 @@ function App() {
             formatVideoFolderPath={formatVideoFolderPath}
             getKeywordJumpTargets={getKeywordJumpTargets}
           />
+          </div>
         )}
       </main>
     </div>
