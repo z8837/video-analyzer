@@ -27,6 +27,10 @@ import {
   writePendingAnalysesFromReport,
   writeTaskFile,
 } from './library-runtime.mjs'
+import {
+  readLatestRateLimits,
+  startRateLimitsWatcher,
+} from './codex-rate-limits.mjs'
 
 const DEFAULT_MODEL = 'gpt-5.4'
 const DEFAULT_REASONING = 'medium'
@@ -37,12 +41,15 @@ const MAX_FAILURE_LIMIT = 100
 const ALLOWED_REASONING_EFFORTS = new Set(['minimal', 'low', 'medium', 'high'])
 const ANALYSIS_CHANNEL = 'analysis:event'
 const APP_CHANNEL = 'app:event'
+const CODEX_RATE_LIMITS_CHANNEL = 'codex:rate-limits-update'
 const LOCAL_ASSET_SCHEME = 'codex-media'
 const DEFAULT_DRAG_ICON_DATA_URL =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4////fwAJ+wP9KobjigAAAABJRU5ErkJggg=='
 
 let mainWindow = null
 let activeRun = null
+let latestCodexRateLimits = null
+let stopCodexRateLimitsWatcher = null
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -838,6 +845,13 @@ function emitAnalysisEvent(payload) {
 function emitAppEvent(payload) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(APP_CHANNEL, payload)
+  }
+}
+
+function emitCodexRateLimits(snapshot) {
+  latestCodexRateLimits = snapshot
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(CODEX_RATE_LIMITS_CHANNEL, snapshot)
   }
 }
 
@@ -2042,6 +2056,16 @@ app.whenReady().then(() => {
   })
 
   createWindow()
+
+  readLatestRateLimits()
+    .then((snapshot) => {
+      if (snapshot) latestCodexRateLimits = snapshot
+    })
+    .catch(() => {})
+  stopCodexRateLimitsWatcher = startRateLimitsWatcher((snapshot) => {
+    emitCodexRateLimits(snapshot)
+  })
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow()
@@ -2050,6 +2074,10 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  if (stopCodexRateLimitsWatcher) {
+    try { stopCodexRateLimitsWatcher() } catch { /* ignore */ }
+    stopCodexRateLimitsWatcher = null
+  }
   if (process.platform !== 'darwin') {
     app.quit()
   }
@@ -2090,3 +2118,9 @@ ipcMain.handle('shell:show-item', async (_event, targetPath) => {
   return true
 })
 ipcMain.handle('shell:open-path', async (_event, targetPath) => shell.openPath(targetPath))
+ipcMain.handle('codex:get-rate-limits', async (_event, options = {}) => {
+  if (!options?.force && latestCodexRateLimits) return latestCodexRateLimits
+  const snapshot = await readLatestRateLimits()
+  if (snapshot) latestCodexRateLimits = snapshot
+  return latestCodexRateLimits
+})

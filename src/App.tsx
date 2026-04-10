@@ -17,6 +17,7 @@ import type {
   AnalysisProgress,
   AnalysisVideo,
   AppEvent,
+  CodexRateLimitsSnapshot,
   CodexReasoningEffort,
   EnvironmentStatus,
   FolderTreeNode,
@@ -24,6 +25,7 @@ import type {
   KeywordMoment,
   ToolSettings,
 } from './types'
+import { CodexRateLimitsPanel } from './components/CodexRateLimitsPanel'
 
 type ViewMode = 'folders' | 'library'
 
@@ -73,6 +75,8 @@ function App() {
   const [expandedFolderPaths, setExpandedFolderPaths] = useState<string[]>([])
   const [showSettings, setShowSettings] = useState(false)
   const [showLog, setShowLog] = useState(false)
+  const [codexRateLimits, setCodexRateLimits] = useState<CodexRateLimitsSnapshot | null>(null)
+  const [isRefreshingCodexRateLimits, setIsRefreshingCodexRateLimits] = useState(false)
   const deferredFilters = useDeferredValue(searchFilters)
   const folderPlayerRef = useRef<HTMLVideoElement | null>(null)
   const libraryPlayerRef = useRef<HTMLVideoElement | null>(null)
@@ -312,6 +316,33 @@ function App() {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    window.codexVideoAnalyzer
+      .getCodexRateLimits()
+      .then((snapshot) => {
+        if (!cancelled && snapshot) setCodexRateLimits(snapshot)
+      })
+      .catch(() => {})
+    const unsubscribe = window.codexVideoAnalyzer.onCodexRateLimitsUpdate((snapshot) => {
+      setCodexRateLimits(snapshot)
+    })
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [])
+
+  const handleRefreshCodexRateLimits = async () => {
+    setIsRefreshingCodexRateLimits(true)
+    try {
+      const snapshot = await window.codexVideoAnalyzer.getCodexRateLimits({ force: true })
+      setCodexRateLimits(snapshot)
+    } finally {
+      setIsRefreshingCodexRateLimits(false)
+    }
+  }
 
   useEffect(() => {
     const unsubscribe = window.codexVideoAnalyzer.onAppEvent((event: AppEvent) => {
@@ -636,6 +667,12 @@ function App() {
               <span>{displayProgress.percent}% · {displayProgress.message || '분석 중...'}</span>
               <button className="cancel-btn" onClick={handleCancel}>취소</button>
             </div>
+            <CodexRateLimitsPanel
+              snapshot={codexRateLimits}
+              variant="compact"
+              isRefreshing={isRefreshingCodexRateLimits}
+              onRefresh={handleRefreshCodexRateLimits}
+            />
           </div>
         )}
 
@@ -774,6 +811,11 @@ function App() {
                 />
               </label>
             </div>
+            <CodexRateLimitsPanel
+              snapshot={codexRateLimits}
+              isRefreshing={isRefreshingCodexRateLimits}
+              onRefresh={handleRefreshCodexRateLimits}
+            />
             <div className="status-strip">
               <span className={`status-pill ${environment?.checks.codex.ok ? 'ok' : 'bad'}`}>
                 Codex {environment?.checks.codex.ok ? '준비됨' : '확인 필요'}

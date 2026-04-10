@@ -28,4 +28,10 @@ contextBridge.exposeInMainWorld('codexVideoAnalyzer', {
     ipcRenderer.on('analysis:event', wrapped)
     return () => ipcRenderer.removeListener('analysis:event', wrapped)
   },
+  getCodexRateLimits: (options) => ipcRenderer.invoke('codex:get-rate-limits', options),
+  onCodexRateLimitsUpdate: (listener) => {
+    const wrapped = (_event, payload) => listener(payload)
+    ipcRenderer.on('codex:rate-limits-update', wrapped)
+    return () => ipcRenderer.removeListener('codex:rate-limits-update', wrapped)
+  },
 })

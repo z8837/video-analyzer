@@ -165,6 +165,40 @@ export type AnalysisEvent =
       folderPath: string
     }
 
+export interface CodexRateLimitWindow {
+  usedPercent: number | null
+  windowMinutes: number | null
+  resetsAt: number | null
+}
+
+export interface CodexTokenUsage {
+  inputTokens: number | null
+  cachedInputTokens: number | null
+  outputTokens: number | null
+  reasoningOutputTokens: number | null
+  totalTokens: number | null
+}
+
+export interface CodexCredits {
+  hasCredits: boolean | null
+  unlimited: boolean | null
+  balance: string | null
+}
+
+export interface CodexRateLimitsSnapshot {
+  primary: CodexRateLimitWindow | null
+  secondary: CodexRateLimitWindow | null
+  limitId: string | null
+  planType: string | null
+  credits: CodexCredits | null
+  totalTokenUsage: CodexTokenUsage | null
+  lastTokenUsage: CodexTokenUsage | null
+  modelContextWindow: number | null
+  observedAt: string
+  checkedAt: string
+  sourceSessionId: string | null
+}
+
 export type AppEvent = {
   type: 'base-folder-selected'
   rootPath: string
@@ -189,4 +223,6 @@ export interface CodexVideoAnalyzerApi {
   openPath: (targetPath: string) => Promise<string>
   onAppEvent: (listener: (payload: AppEvent) => void) => () => void
   onAnalysisEvent: (listener: (payload: AnalysisEvent) => void) => () => void
+  getCodexRateLimits: (options?: { force?: boolean }) => Promise<CodexRateLimitsSnapshot | null>
+  onCodexRateLimitsUpdate: (listener: (payload: CodexRateLimitsSnapshot) => void) => () => void
 }
