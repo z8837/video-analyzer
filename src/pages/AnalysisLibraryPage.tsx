@@ -5,15 +5,12 @@ import type { AnalysisData, AnalysisVideo, KeywordMoment } from '../types'
 type AnalysisLibraryPageProps = {
   analysis: AnalysisData | null
   filteredAnalysisVideos: AnalysisVideo[]
-  visibleVideos: AnalysisVideo[]
-  visibleCount: number
   searchInput: string
   searchFilters: string[]
   librarySelectedVideoPath: string
   librarySelectedVideo: AnalysisVideo | null | undefined
   rootFolder: string
   gridRef: RefObject<HTMLDivElement | null>
-  sentinelRef: RefObject<HTMLDivElement | null>
   libraryPlayerRef: RefObject<HTMLVideoElement | null>
   onSearchInputChange: (value: string) => void
   onAddSearchFilter: (text: string) => void
@@ -31,15 +28,12 @@ type AnalysisLibraryPageProps = {
 export function AnalysisLibraryPage({
   analysis,
   filteredAnalysisVideos,
-  visibleVideos,
-  visibleCount,
   searchInput,
   searchFilters,
   librarySelectedVideoPath,
   librarySelectedVideo,
   rootFolder,
   gridRef,
-  sentinelRef,
   libraryPlayerRef,
   onSearchInputChange,
   onAddSearchFilter,
@@ -96,7 +90,7 @@ export function AnalysisLibraryPage({
         </div>
 
         <div className="library-grid" ref={gridRef}>
-          {visibleVideos.map((video) => (
+          {filteredAnalysisVideos.map((video) => (
             <button
               key={video.absolutePath}
               className={`lib-card ${video.absolutePath === librarySelectedVideoPath ? 'active' : ''}`}
@@ -136,10 +130,6 @@ export function AnalysisLibraryPage({
               </div>
             </button>
           ))}
-
-          {visibleCount < filteredAnalysisVideos.length && (
-            <div ref={sentinelRef} className="library-sentinel" />
-          )}
 
           {filteredAnalysisVideos.length === 0 && (
             <div className="empty-card">

@@ -66,8 +66,6 @@ function App() {
   const deferredFilters = useDeferredValue(searchFilters)
   const folderPlayerRef = useRef<HTMLVideoElement | null>(null)
   const libraryPlayerRef = useRef<HTMLVideoElement | null>(null)
-  const [visibleCount, setVisibleCount] = useState(20)
-  const sentinelRef = useRef<HTMLDivElement | null>(null)
   const gridRef = useRef<HTMLDivElement | null>(null)
 
   const analysisByPath = useMemo(() => {
@@ -113,10 +111,6 @@ function App() {
       return deferredFilters.every((filter) => haystack.includes(filter.toLowerCase()))
     })
   }, [analysis, deferredFilters])
-
-  const visibleVideos = useMemo(() => {
-    return filteredAnalysisVideos.slice(0, visibleCount)
-  }, [filteredAnalysisVideos, visibleCount])
 
   const selectedFolderNode = useMemo(() => {
     if (!folderTree || !selectedFolderPath) {
@@ -427,26 +421,8 @@ function App() {
   }, [isAnalyzing, rootFolder])
 
   useEffect(() => {
-    setVisibleCount(20)
     gridRef.current?.scrollTo({ top: 0 })
   }, [deferredFilters])
-
-  useEffect(() => {
-    const sentinel = sentinelRef.current
-    if (!sentinel) return
-
-    const obs = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setVisibleCount((prev) => Math.min(prev + 20, filteredAnalysisVideos.length))
-        }
-      },
-      { threshold: 0.1 }
-    )
-
-    obs.observe(sentinel)
-    return () => obs.disconnect()
-  }, [filteredAnalysisVideos.length])
 
   const handleRefreshEnvironment = async () => {
     setIsBusy(true)
@@ -851,15 +827,12 @@ function App() {
           <AnalysisLibraryPage
             analysis={analysis}
             filteredAnalysisVideos={filteredAnalysisVideos}
-            visibleVideos={visibleVideos}
-            visibleCount={visibleCount}
             searchInput={searchInput}
             searchFilters={searchFilters}
             librarySelectedVideoPath={librarySelectedVideoPath}
             librarySelectedVideo={librarySelectedVideo}
             rootFolder={rootFolder}
             gridRef={gridRef}
-            sentinelRef={sentinelRef}
             libraryPlayerRef={libraryPlayerRef}
             onSearchInputChange={setSearchInput}
             onAddSearchFilter={addSearchFilter}
