@@ -1,4 +1,12 @@
-import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  startTransition,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import type { DragEvent } from 'react'
 import './App.css'
 import { AnalysisLibraryPage } from './pages/AnalysisLibraryPage'
@@ -509,19 +517,18 @@ function App() {
     }
   }
 
-  const handleVideoFileDragStart = (
-    event: DragEvent<HTMLButtonElement>,
-    filePath: string,
-    iconPath = '',
-  ) => {
-    if (!filePath) {
-      event.preventDefault()
-      return
-    }
+  const handleVideoFileDragStart = useCallback(
+    (event: DragEvent<HTMLButtonElement>, filePath: string, iconPath = '') => {
+      if (!filePath) {
+        event.preventDefault()
+        return
+      }
 
-    event.preventDefault()
-    window.codexVideoAnalyzer.startDragFile(filePath, iconPath)
-  }
+      event.preventDefault()
+      window.codexVideoAnalyzer.startDragFile(filePath, iconPath)
+    },
+    [],
+  )
 
   const handleToggleFolder = (folderPath: string) => {
     setExpandedFolderPaths((current) => {

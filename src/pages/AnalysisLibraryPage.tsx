@@ -1,6 +1,6 @@
 import type { DragEvent, RefObject } from 'react'
 import { KeywordJumpSection } from '../components/KeywordJumpSection'
-import { VideoThumbnail } from '../components/VideoThumbnail'
+import { LibraryVideoCard } from '../components/LibraryVideoCard'
 import type { AnalysisData, AnalysisVideo, KeywordMoment } from '../types'
 
 type AnalysisLibraryPageProps = {
@@ -92,44 +92,14 @@ export function AnalysisLibraryPage({
 
         <div className="library-grid" ref={gridRef}>
           {filteredAnalysisVideos.map((video) => (
-            <button
+            <LibraryVideoCard
               key={video.absolutePath}
-              className={`lib-card ${video.absolutePath === librarySelectedVideoPath ? 'active' : ''}`}
-              type="button"
-              draggable
-              onClick={() => onSelectVideo(video.absolutePath)}
-              onDragStart={(event) =>
-                onVideoFileDragStart(event, video.absolutePath, video.sampleImagePath)
-              }
-            >
-              <VideoThumbnail
-                videoUrl={video.videoUrl}
-                sampleImageUrl={video.sampleImageUrl}
-                title={video.title}
-                badgeText={video.fileName}
-                badgeVariant="filename"
-                durationText={formatDuration(video.durationSeconds)}
-              />
-              <div className="lib-card-body">
-                <strong>{video.title}</strong>
-                <span className="lib-card-meta">
-                  {video.relativePath.includes('/')
-                    ? `${video.relativePath.substring(0, video.relativePath.lastIndexOf('/'))}/`
-                    : './'}
-                </span>
-                {video.keywords.length > 0 ? (
-                  <div className="pill-row">
-                    {video.keywords.slice(0, 4).map((keyword) => (
-                      <span key={`${video.absolutePath}-${keyword}`} className="mini-pill">
-                        {keyword}
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <span className="lib-card-empty-keywords">키워드 없음</span>
-                )}
-              </div>
-            </button>
+              video={video}
+              isActive={video.absolutePath === librarySelectedVideoPath}
+              durationText={formatDuration(video.durationSeconds)}
+              onSelect={onSelectVideo}
+              onDragStart={onVideoFileDragStart}
+            />
           ))}
 
           {filteredAnalysisVideos.length === 0 && (
