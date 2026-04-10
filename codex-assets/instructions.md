@@ -7,13 +7,13 @@ Role:
 - Write Markdown files in UTF-8.
 
 Input model:
-- The prompt tells you the current working directory, selected source folder, and exact task file path for this worker.
-- The task file path given in the prompt is the single source of truth for this worker.
+- The prompt tells you the current working directory, selected source folder, and inline Task JSON for this worker.
+- The inline Task JSON given in the prompt is the single source of truth for this worker.
 
 Scope:
-- Analyze only the pending videos listed in the task file from the prompt.
+- Analyze only the pending videos listed in the inline Task JSON from the prompt.
 - Ignore videos that are not listed there.
-- Ignore videos in subfolders unless they are explicitly listed in that task file.
+- Ignore videos in subfolders unless they are explicitly listed in that Task JSON.
 - Supported extensions are `.mp4`, `.mov`, `.mkv`, `.avi`, `.webm`, `.m4v`, `.wmv`.
 - Do not inspect unrelated repo files, docs, build outputs, or source code.
 
@@ -26,7 +26,7 @@ Permanent outputs:
 - Do not leave permanent sample-sheet images or temporary helper files unless the user explicitly asked for them.
 
 Pre-extracted metadata:
-- The task file already contains `metadata` for each pending video with `durationSeconds`, `width`, `height`, `fps`, and `hasAudio`.
+- The inline Task JSON already contains `metadata` for each pending video with `durationSeconds`, `width`, `height`, `fps`, and `hasAudio`.
 - Do NOT run `ffprobe` yourself. Use the provided metadata directly.
 - Some task items also include `sampleTimesSeconds`, a short list of recommended timeline points for frame extraction.
 
@@ -34,7 +34,11 @@ Allowed temporary work:
 - You may use `ffmpeg` to extract a small number of temporary frames for visual inspection if needed.
 - Prefer 2–4 representative frames per video, scaled down (e.g. `-vf scale=540:-1`).
 - If `sampleTimesSeconds` is provided, prefer those timestamps when extracting frames and when assigning `keywordMoments`.
-- If you create temporary files for inspection, keep them outside the permanent library when possible and clean them up before finishing.
+- Use quiet ffmpeg output such as `-hide_banner -loglevel error` to avoid wasting tokens.
+- After extracting frames, print the full path of every generated `.jpg` file, one path per line. Do not print only the output directory.
+- Do not create temporary frame files under `analyze/runs`. Use the OS temp directory or a short-lived folder outside `analyze/runs`.
+- Do not attempt to delete temporary frame files or directories before the final response; rejected cleanup commands waste tokens.
+- If you cannot inspect the extracted frame images, say the visual content is unclear rather than guessing from prior context.
 
 Forbidden tools and approaches:
 - Do NOT use Swift, `osascript`, JXA (JavaScript for Automation), or Apple Vision framework.
@@ -46,7 +50,8 @@ Forbidden tools and approaches:
 - Do NOT perform programmatic image analysis: no face detection, edge detection, color histograms, Hough transforms, ASCII art conversion, or any computer-vision processing.
 - After extracting frames with `ffmpeg`, simply describe what you see in the images. Do not write code to interpret them.
 - Limit yourself to at most 2 shell commands per video: one `ffmpeg` call to extract frames, then produce your JSON response.
-- Do not spend time on broad repository searches or environment exploration once the task file is understood.
+- Do NOT analyze terminal text, logs, cleanup errors, or unrelated screenshots as if they were video frames.
+- Do not spend time on broad repository searches or environment exploration once the Task JSON is understood.
 
 Markdown format:
 - Each markdown file must contain:
@@ -87,7 +92,7 @@ Required JSON fields:
 
 Field rules:
 - `source`: project-root-relative video path.
-- Copy `source` exactly from the task file. Do not translate, normalize, re-encode, or reconstruct it from folder and file names.
+- Copy `source` exactly from the Task JSON. Do not translate, normalize, re-encode, or reconstruct it from folder and file names.
 - `fileName`: original file name with extension.
 - `title`: short Korean display title.
 - `summary`: 1 to 2 sentence Korean summary.
@@ -121,11 +126,12 @@ Accuracy rules:
 - Do not fabricate details that are not supported by the frames or metadata.
 
 Workflow:
-1. Read the task file path provided in the prompt.
+1. Read the inline Task JSON provided in the prompt.
 2. For each pending video:
-   - use the pre-extracted `metadata` from the task file for durationSeconds, width, height, fps, hasAudio,
-   - use `sampleTimesSeconds` from the task file when available to inspect multiple points in the timeline,
+   - use the pre-extracted `metadata` from the Task JSON for durationSeconds, width, height, fps, hasAudio,
+   - use `sampleTimesSeconds` from the Task JSON when available to inspect multiple points in the timeline,
    - extract only a few representative frames with `ffmpeg` if needed for visual description,
+   - verify the generated frame paths are printed individually and belong to the exact listed `source`,
    - prepare one analysis object for the final JSON response,
    - choose `keywordMoments` that work well as jump targets rather than putting most keywords at `0`.
 3. Do not rewrite unrelated existing markdown files.
