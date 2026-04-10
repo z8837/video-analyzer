@@ -28,9 +28,13 @@ import {
   writeTaskFile,
 } from './library-runtime.mjs'
 
-const FIXED_MODEL = 'gpt-5.4'
-const FIXED_REASONING = 'high'
-const MAX_PARALLEL_ANALYSIS = 4
+const DEFAULT_MODEL = 'gpt-5.4'
+const DEFAULT_REASONING = 'medium'
+const DEFAULT_MAX_PARALLEL_ANALYSIS = 5
+const DEFAULT_CONSECUTIVE_FAILURE_LIMIT = 5
+const MAX_PARALLEL_LIMIT = 20
+const MAX_FAILURE_LIMIT = 100
+const ALLOWED_REASONING_EFFORTS = new Set(['minimal', 'low', 'medium', 'high'])
 const ANALYSIS_CHANNEL = 'analysis:event'
 const APP_CHANNEL = 'app:event'
 const LOCAL_ASSET_SCHEME = 'codex-media'
@@ -86,7 +90,40 @@ function getDefaultSettings() {
     codexCommand: isWindows() ? 'codex.cmd' : 'codex',
     ffmpegCommand: isWindows() ? 'ffmpeg.exe' : 'ffmpeg',
     lastRootPath: '',
+    codexModel: DEFAULT_MODEL,
+    codexReasoningEffort: DEFAULT_REASONING,
+    maxParallelAnalysis: DEFAULT_MAX_PARALLEL_ANALYSIS,
+    consecutiveFailureLimit: DEFAULT_CONSECUTIVE_FAILURE_LIMIT,
   }
+}
+
+function resolveCodexModel(settings) {
+  const value = (settings?.codexModel || '').trim()
+  return value || DEFAULT_MODEL
+}
+
+function resolveCodexReasoning(settings) {
+  const value = (settings?.codexReasoningEffort || '').trim()
+  return ALLOWED_REASONING_EFFORTS.has(value) ? value : DEFAULT_REASONING
+}
+
+function resolveMaxParallel(settings) {
+  const raw = Number(settings?.maxParallelAnalysis)
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return DEFAULT_MAX_PARALLEL_ANALYSIS
+  }
+  return Math.min(MAX_PARALLEL_LIMIT, Math.max(1, Math.floor(raw)))
+}
+
+function resolveConsecutiveFailureLimit(settings) {
+  const raw = Number(settings?.consecutiveFailureLimit)
+  if (!Number.isFinite(raw) || raw < 0) {
+    return DEFAULT_CONSECUTIVE_FAILURE_LIMIT
+  }
+  if (raw === 0) {
+    return 0
+  }
+  return Math.min(MAX_FAILURE_LIMIT, Math.max(1, Math.floor(raw)))
 }
 
 function getSettingsPath() {
@@ -96,14 +133,24 @@ function getSettingsPath() {
 async function loadSettings() {
   try {
     const raw = await fs.readFile(getSettingsPath(), 'utf8')
-    return { ...getDefaultSettings(), ...JSON.parse(raw) }
+    return sanitizeSettings({ ...getDefaultSettings(), ...JSON.parse(raw) })
   } catch {
     return getDefaultSettings()
   }
 }
 
+function sanitizeSettings(settings) {
+  return {
+    ...settings,
+    codexModel: resolveCodexModel(settings),
+    codexReasoningEffort: resolveCodexReasoning(settings),
+    maxParallelAnalysis: resolveMaxParallel(settings),
+    consecutiveFailureLimit: resolveConsecutiveFailureLimit(settings),
+  }
+}
+
 async function saveSettings(patch) {
-  const merged = { ...(await loadSettings()), ...patch }
+  const merged = sanitizeSettings({ ...(await loadSettings()), ...patch })
   await fs.writeFile(getSettingsPath(), JSON.stringify(merged, null, 2), 'utf8')
   return merged
 }
@@ -617,8 +664,8 @@ async function buildAnalysisVideo(projectRootPath, analyzeDir, entry) {
     sampleImagePath,
     sampleImageUrl,
     generatedAt: entry.record.generatedAt || '',
-    model: entry.record.model || FIXED_MODEL,
-    reasoningEffort: entry.record.reasoningEffort || FIXED_REASONING,
+    model: entry.record.model || DEFAULT_MODEL,
+    reasoningEffort: entry.record.reasoningEffort || DEFAULT_REASONING,
   }
 }
 
@@ -691,8 +738,8 @@ async function loadAnalysis(projectRootPath) {
     folderPath: projectRootPath,
     directVideoCount: videos.length,
     generatedAt,
-    model: FIXED_MODEL,
-    reasoningEffort: FIXED_REASONING,
+    model: DEFAULT_MODEL,
+    reasoningEffort: DEFAULT_REASONING,
     schemaVersion: 1,
     videos,
   }
@@ -1032,6 +1079,11 @@ async function initializeRunArtifacts(
     settings,
     env: buildChildEnv(settings),
     instructionsPath: getAssetPath('instructions.md'),
+    codexModel: resolveCodexModel(settings),
+    codexReasoning: resolveCodexReasoning(settings),
+    consecutiveFailureLimit: resolveConsecutiveFailureLimit(settings),
+    consecutiveFailures: 0,
+    autoStopRequested: false,
     runId,
     runDirPath,
     taskSnapshotPath,
@@ -1167,6 +1219,42 @@ async function finalizeAnalysisRun(runState) {
   }
 }
 
+function killRunningWorkers(runState) {
+  for (const workerState of runState.workers.values()) {
+    if (!workerState.child?.pid || workerState.closed) {
+      continue
+    }
+
+    try {
+      if (isWindows()) {
+        spawn('taskkill', ['/pid', String(workerState.child.pid), '/t', '/f'], { windowsHide: true })
+      } else {
+        workerState.child.kill('SIGTERM')
+      }
+    } catch {
+      // Ignore kill errors; worker close handler will still fire.
+    }
+  }
+}
+
+async function triggerAutoStop(runState, reason) {
+  if (runState.autoStopRequested) {
+    return
+  }
+
+  runState.autoStopRequested = true
+  runState.pendingQueue.length = 0
+
+  emitAnalysisEvent({
+    type: 'log',
+    stream: 'stderr',
+    message: reason,
+  })
+  await appendRunEventLog(runState, 'stderr', reason)
+
+  killRunningWorkers(runState)
+}
+
 async function handleWorkerClose(runState, workerState, code) {
   if (workerState.closed) {
     return
@@ -1176,6 +1264,7 @@ async function handleWorkerClose(runState, workerState, code) {
   runState.workers.delete(workerState.workerIndex)
 
   const finalMessage = await readTextIfExists(workerState.outputLastMessagePath)
+  let workerFailed = false
 
   if (!runState.cancelRequested) {
     if (code === 0 && !workerState.spawnError) {
@@ -1186,8 +1275,8 @@ async function handleWorkerClose(runState, workerState, code) {
         )
 
         await writePendingAnalysesFromReport(runState.folderPath, workerContext, finalMessage, {
-          model: FIXED_MODEL,
-          reasoningEffort: FIXED_REASONING,
+          model: runState.codexModel,
+          reasoningEffort: runState.codexReasoning,
         })
         emitAnalysisEvent({
           type: 'log',
@@ -1196,6 +1285,7 @@ async function handleWorkerClose(runState, workerState, code) {
         })
         await appendRunEventLog(runState, 'stdout', `${buildWorkerPrefix(workerState)} 완료`)
       } catch (error) {
+        workerFailed = true
         runState.failures.push({
           workerIndex: workerState.workerIndex,
           source: workerState.pendingVideo.source,
@@ -1204,6 +1294,7 @@ async function handleWorkerClose(runState, workerState, code) {
         })
       }
     } else {
+      workerFailed = true
       runState.failures.push({
         workerIndex: workerState.workerIndex,
         source: workerState.pendingVideo.source,
@@ -1212,6 +1303,23 @@ async function handleWorkerClose(runState, workerState, code) {
           `Codex CLI가 비정상 종료되었습니다${code == null ? '' : ` (code ${code})`}.`,
         finalMessage,
       })
+    }
+
+    if (workerFailed) {
+      runState.consecutiveFailures += 1
+    } else {
+      runState.consecutiveFailures = 0
+    }
+
+    if (
+      !runState.autoStopRequested &&
+      runState.consecutiveFailureLimit > 0 &&
+      runState.consecutiveFailures >= runState.consecutiveFailureLimit
+    ) {
+      const reason =
+        `연속 ${runState.consecutiveFailures}개 작업이 실패하여 나머지 분석을 자동으로 중단합니다. ` +
+        `(한도: ${runState.consecutiveFailureLimit}, 사용량 한도 초과 또는 환경 문제일 수 있습니다.)`
+      await triggerAutoStop(runState, reason)
     }
   }
 
@@ -1255,9 +1363,9 @@ async function launchAnalysisWorker(runState, workerState) {
       '-C',
       runState.folderPath,
       '-m',
-      FIXED_MODEL,
+      runState.codexModel,
       '-c',
-      `model_reasoning_effort=${JSON.stringify(FIXED_REASONING)}`,
+      `model_reasoning_effort=${JSON.stringify(runState.codexReasoning)}`,
       '-c',
       `model_instructions_file=${JSON.stringify(normalizePathForConfig(runState.instructionsPath))}`,
       '-o',
@@ -1555,7 +1663,7 @@ async function startAnalysis(sourceFolderPath) {
   const resumeContext = await getResumeContext(projectRootPath, sourceFolderPath)
   await enrichPendingVideosWithMetadata(resumeContext, settings, sourceFolderPath)
   await writeTaskFile(projectRootPath, resumeContext)
-  const maxParallel = Math.min(MAX_PARALLEL_ANALYSIS, Math.max(resumeContext.pendingCount, 1))
+  const maxParallel = Math.min(resolveMaxParallel(settings), Math.max(resumeContext.pendingCount, 1))
   const runState = await initializeRunArtifacts(
     projectRootPath,
     sourceFolderPath,
@@ -1594,7 +1702,7 @@ async function startAnalysis(sourceFolderPath) {
       finalMessage,
       endedAt: new Date().toISOString(),
     })
-    emitAnalysisEvent({ type: 'started', folderPath: projectRootPath, model: FIXED_MODEL, reasoningEffort: FIXED_REASONING })
+    emitAnalysisEvent({ type: 'started', folderPath: projectRootPath, model: runState.codexModel, reasoningEffort: runState.codexReasoning })
     emitAnalysisEvent({
       type: 'completed',
       folderPath: projectRootPath,
@@ -1606,7 +1714,7 @@ async function startAnalysis(sourceFolderPath) {
   }
 
   activeRun = runState
-  emitAnalysisEvent({ type: 'started', folderPath: projectRootPath, model: FIXED_MODEL, reasoningEffort: FIXED_REASONING })
+  emitAnalysisEvent({ type: 'started', folderPath: projectRootPath, model: runState.codexModel, reasoningEffort: runState.codexReasoning })
   startProgressPolling(runState)
   emitAnalysisEvent({
     type: 'log',
@@ -1694,8 +1802,8 @@ async function getEnvironmentStatus(settingsOverride = null) {
 
   return {
     platform: process.platform,
-    model: FIXED_MODEL,
-    reasoningEffort: FIXED_REASONING,
+    model: resolveCodexModel(settings),
+    reasoningEffort: resolveCodexReasoning(settings),
     instructionsPath: getAssetPath('instructions.md'),
     settings,
     checks: {

@@ -1,12 +1,15 @@
 import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import type { DragEvent, SyntheticEvent } from 'react'
+import type { DragEvent } from 'react'
 import './App.css'
+import { AnalysisLibraryPage } from './pages/AnalysisLibraryPage'
+import { FolderExplorerPage } from './pages/FolderExplorerPage'
 import type {
   AnalysisData,
   AnalysisEvent,
   AnalysisProgress,
   AnalysisVideo,
   AppEvent,
+  CodexReasoningEffort,
   EnvironmentStatus,
   FolderTreeNode,
   FolderVideoItem,
@@ -15,6 +18,13 @@ import type {
 } from './types'
 
 type ViewMode = 'folders' | 'library'
+
+const CODEX_MODEL_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'gpt-5.4', label: 'gpt-5.4 (최신 frontier)' },
+  { value: 'gpt-5.4-mini', label: 'gpt-5.4-mini (소형, 저렴)' },
+  { value: 'gpt-5.3-codex', label: 'gpt-5.3-codex (코딩 특화)' },
+  { value: 'gpt-5.2', label: 'gpt-5.2 (장시간 작업용)' },
+]
 
 const EMPTY_PROGRESS: AnalysisProgress = {
   exists: false,
@@ -28,120 +38,6 @@ const EMPTY_PROGRESS: AnalysisProgress = {
   currentFile: '',
   message: '',
   updatedAt: '',
-}
-
-function VideoThumbnail({
-  videoUrl,
-  sampleImageUrl,
-  title,
-  badgeText,
-  badgeVariant,
-  durationText,
-}: {
-  videoUrl: string
-  sampleImageUrl?: string
-  title: string
-  badgeText?: string
-  badgeVariant?: 'preview' | 'filename'
-  durationText?: string
-}) {
-  const handleLoadedMetadata = (event: SyntheticEvent<HTMLVideoElement>) => {
-    const element = event.currentTarget
-    if (element.duration > 0 && element.currentTime === 0) {
-      try {
-        element.currentTime = Math.min(0.05, element.duration)
-      } catch {
-        // Keep the default first frame if seeking is blocked.
-      }
-    }
-  }
-
-  const handleFrameReady = (event: SyntheticEvent<HTMLVideoElement>) => {
-    event.currentTarget.pause()
-  }
-
-  return (
-    <div
-      className={`video-thumb ${sampleImageUrl ? 'has-image' : 'has-video'}`}
-      style={sampleImageUrl ? { backgroundImage: `url("${sampleImageUrl}")` } : undefined}
-      aria-label={title}
-    >
-      {badgeText && (
-        <span className={`video-thumb-badge ${badgeVariant ?? 'preview'}`}>{badgeText}</span>
-      )}
-      {durationText && <span className="video-thumb-duration">{durationText}</span>}
-      {!sampleImageUrl && videoUrl && (
-        <video
-          key={videoUrl}
-          className="video-thumb-player"
-          src={videoUrl}
-          muted
-          playsInline
-          preload="metadata"
-          aria-hidden="true"
-          onLoadedMetadata={handleLoadedMetadata}
-          onLoadedData={handleFrameReady}
-          onSeeked={handleFrameReady}
-        />
-      )}
-    </div>
-  )
-}
-
-function FolderTreeBranch({
-  node,
-  depth,
-  expandedPaths,
-  selectedPath,
-  onToggle,
-  onSelect,
-}: {
-  node: FolderTreeNode
-  depth: number
-  expandedPaths: Set<string>
-  selectedPath: string
-  onToggle: (folderPath: string) => void
-  onSelect: (folderPath: string) => void
-}) {
-  const hasChildren = node.children.length > 0
-  const isExpanded = expandedPaths.has(node.path)
-  const isSelected = node.path === selectedPath
-  const label = node.relativePath === '.' ? '기본 폴더' : node.name
-
-  return (
-    <div className="tree-branch">
-      <button
-        className={`tree-row ${isSelected ? 'selected' : ''}`}
-        type="button"
-        onClick={() => {
-          onSelect(node.path)
-          if (hasChildren) onToggle(node.path)
-        }}
-        style={{ paddingLeft: `${12 + depth * 18}px` }}
-      >
-        <span className="tree-arrow">{hasChildren ? (isExpanded ? '▾' : '▸') : ''}</span>
-        <span className="tree-icon">📁</span>
-        <span className="tree-name">{label}</span>
-        <span className="tree-count">{node.totalVideoCount}</span>
-      </button>
-
-      {hasChildren && isExpanded && (
-        <div className="tree-children">
-          {node.children.map((child) => (
-            <FolderTreeBranch
-              key={child.path}
-              node={child}
-              depth={depth + 1}
-              expandedPaths={expandedPaths}
-              selectedPath={selectedPath}
-              onToggle={onToggle}
-              onSelect={onSelect}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  )
 }
 
 function App() {
@@ -170,6 +66,9 @@ function App() {
   const deferredFilters = useDeferredValue(searchFilters)
   const folderPlayerRef = useRef<HTMLVideoElement | null>(null)
   const libraryPlayerRef = useRef<HTMLVideoElement | null>(null)
+  const [visibleCount, setVisibleCount] = useState(20)
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
+  const gridRef = useRef<HTMLDivElement | null>(null)
 
   const analysisByPath = useMemo(() => {
     return new Map((analysis?.videos ?? []).map((video) => [video.absolutePath, video]))
@@ -214,6 +113,10 @@ function App() {
       return deferredFilters.every((filter) => haystack.includes(filter.toLowerCase()))
     })
   }, [analysis, deferredFilters])
+
+  const visibleVideos = useMemo(() => {
+    return filteredAnalysisVideos.slice(0, visibleCount)
+  }, [filteredAnalysisVideos, visibleCount])
 
   const selectedFolderNode = useMemo(() => {
     if (!folderTree || !selectedFolderPath) {
@@ -523,6 +426,28 @@ function App() {
     }
   }, [isAnalyzing, rootFolder])
 
+  useEffect(() => {
+    setVisibleCount(20)
+    gridRef.current?.scrollTo({ top: 0 })
+  }, [deferredFilters])
+
+  useEffect(() => {
+    const sentinel = sentinelRef.current
+    if (!sentinel) return
+
+    const obs = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setVisibleCount((prev) => Math.min(prev + 20, filteredAnalysisVideos.length))
+        }
+      },
+      { threshold: 0.1 }
+    )
+
+    obs.observe(sentinel)
+    return () => obs.disconnect()
+  }, [filteredAnalysisVideos.length])
+
   const handleRefreshEnvironment = async () => {
     setIsBusy(true)
     setErrorMessage('')
@@ -718,7 +643,20 @@ function App() {
           </div>
         )}
 
-        {errorMessage && <div className="error-banner">{errorMessage}</div>}
+        {errorMessage && (
+          <div className="error-banner">
+            <div className="error-banner-content">{errorMessage}</div>
+            <button
+              type="button"
+              className="error-banner-close"
+              onClick={() => setErrorMessage('')}
+              aria-label="오류 메시지 닫기"
+              title="닫기"
+            >
+              ✕
+            </button>
+          </div>
+        )}
 
         {/* ── 설정 패널 (토글) ── */}
         {showSettings && (
@@ -758,6 +696,88 @@ function App() {
                 {isBusy ? '준비 중...' : '저장 및 점검'}
               </button>
             </div>
+            <div className="settings-grid settings-grid-analysis">
+              <label className="field">
+                <span>Codex 모델</span>
+                <select
+                  value={draftSettings?.codexModel ?? 'gpt-5.4'}
+                  onChange={(event) =>
+                    setDraftSettings((current) => ({
+                      ...(current ?? getFallbackSettings()),
+                      codexModel: event.target.value,
+                    }))
+                  }
+                >
+                  {CODEX_MODEL_OPTIONS.some(
+                    (option) => option.value === draftSettings?.codexModel,
+                  ) ? null : draftSettings?.codexModel ? (
+                    <option value={draftSettings.codexModel}>
+                      {draftSettings.codexModel} (커스텀)
+                    </option>
+                  ) : null}
+                  {CODEX_MODEL_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>Reasoning effort (토큰 사용량)</span>
+                <select
+                  value={draftSettings?.codexReasoningEffort ?? 'medium'}
+                  onChange={(event) =>
+                    setDraftSettings((current) => ({
+                      ...(current ?? getFallbackSettings()),
+                      codexReasoningEffort: event.target.value as CodexReasoningEffort,
+                    }))
+                  }
+                >
+                  <option value="minimal">minimal (최소 토큰)</option>
+                  <option value="low">low</option>
+                  <option value="medium">medium (권장)</option>
+                  <option value="high">high (최대 토큰)</option>
+                </select>
+              </label>
+              <label className="field">
+                <span>동시 실행 수</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  step={1}
+                  value={draftSettings?.maxParallelAnalysis ?? 5}
+                  onChange={(event) =>
+                    setDraftSettings((current) => ({
+                      ...(current ?? getFallbackSettings()),
+                      maxParallelAnalysis: Math.max(
+                        1,
+                        Math.min(20, Number(event.target.value) || 1),
+                      ),
+                    }))
+                  }
+                />
+              </label>
+              <label className="field">
+                <span>연속 실패 시 중단 (0=끔)</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={draftSettings?.consecutiveFailureLimit ?? 5}
+                  onChange={(event) =>
+                    setDraftSettings((current) => ({
+                      ...(current ?? getFallbackSettings()),
+                      consecutiveFailureLimit: Math.max(
+                        0,
+                        Math.min(100, Number(event.target.value) || 0),
+                      ),
+                    }))
+                  }
+                />
+              </label>
+            </div>
             <div className="status-strip">
               <span className={`status-pill ${environment?.checks.codex.ok ? 'ok' : 'bad'}`}>
                 Codex {environment?.checks.codex.ok ? '준비됨' : '확인 필요'}
@@ -793,453 +813,66 @@ function App() {
           </section>
         )}
 
-        {/* ══════ 폴더 탐색 뷰 ══════ */}
         {viewMode === 'folders' && (
-          <div className="folder-view">
-            {/* 좌측: 폴더 트리 */}
-            <aside className="folder-tree-pane panel">
-              <div className="pane-header">
-                <h2>폴더 구조</h2>
-                <div className="action-group">
-                  <button
-                    className="ghost-button small"
-                    onClick={() => rootFolder && window.codexVideoAnalyzer.showItemInFolder(rootFolder)}
-                    disabled={!rootFolder}
-                  >
-                    열기
-                  </button>
-                  <button
-                    className="ghost-button small"
-                    onClick={() => refreshWorkspace(rootFolder, selectedFolderPath || rootFolder, true)}
-                    disabled={!rootFolder || isBusy}
-                  >
-                    새로고침
-                  </button>
-                </div>
-              </div>
-
-              {rootFolder && <p className="root-path">{rootFolder}</p>}
-
-              {folderTree ? (
-                <div className="tree-scroll">
-                  <FolderTreeBranch
-                    node={folderTree}
-                    depth={0}
-                    expandedPaths={expandedPathSet}
-                    selectedPath={selectedFolderPath}
-                    onToggle={handleToggleFolder}
-                    onSelect={(folderPath) => void loadFolderVideosForPath(folderPath, false)}
-                  />
-                </div>
-              ) : (
-                <div className="empty-card">기본 폴더를 선택하면 폴더 트리가 표시됩니다.</div>
-              )}
-
-              {/* 분석 버튼 */}
-              <div className="analyze-action">
-                {isAnalyzing ? (
-                  <button className="danger-button full-width" onClick={handleCancel}>
-                    분석 취소
-                  </button>
-                ) : (
-                  <button
-                    className="primary-button full-width"
-                    onClick={handleAnalyzeSelectedFolder}
-                    disabled={
-                      !selectedFolderPath ||
-                      isBusy ||
-                      (selectedFolderNode?.directVideoCount ?? folderVideos.length) === 0 ||
-                      !analysisPrerequisitesReady
-                    }
-                  >
-                    선택 폴더 분석
-                  </button>
-                )}
-              </div>
-            </aside>
-
-            {/* 중앙: 폴더 영상 목록 */}
-            <section className="folder-content">
-              <div className="content-header">
-                <div>
-                  <h1>{formatFolderPath(selectedFolderPath, rootFolder)}</h1>
-                  <p className="content-subtitle">
-                    영상 {folderVideos.length}개 · 분석됨 {analyzedFolderVideoCount}개 · 미분석 {pendingFolderVideoCount}개
-                  </p>
-                </div>
-              </div>
-
-              <div className="video-grid">
-                {folderVideos.map((video) => (
-                  <button
-                    key={video.absolutePath}
-                    className={`video-card ${video.absolutePath === folderSelectedVideoPath ? 'active' : ''}`}
-                    type="button"
-                    draggable
-                    onClick={() => setFolderSelectedVideoPath(video.absolutePath)}
-                    onDragStart={(event) =>
-                      handleVideoFileDragStart(event, video.absolutePath, video.sampleImagePath)
-                    }
-                  >
-                    <VideoThumbnail
-                      videoUrl={video.videoUrl}
-                      sampleImageUrl={video.sampleImageUrl}
-                      title={video.title}
-                      durationText={formatDuration(video.durationSeconds)}
-                    />
-                    <div className="video-card-body">
-                      <div className="video-card-top">
-                        <strong>{video.title}</strong>
-                        <span className={`status-badge ${video.analyzed ? 'analyzed' : 'pending'}`}>
-                          {video.analyzed ? '분석됨' : '미분석'}
-                        </span>
-                      </div>
-                      <span className="video-card-file-name">{video.fileName}</span>
-                      <p>
-                        {video.analyzed
-                          ? video.summary
-                          : '아직 분석 결과가 없습니다.'}
-                      </p>
-                    </div>
-                  </button>
-                ))}
-
-                {folderVideos.length === 0 && (
-                  <div className="empty-card">영상이 없습니다.</div>
-                )}
-              </div>
-            </section>
-
-            {/* 우측: 선택 영상 상세 */}
-            <aside className="detail-pane panel">
-              {(folderSelectedVideo || folderSelectedAnalysis) ? (
-                <>
-                  <video
-                    key={folderSelectedAnalysis?.videoUrl || folderSelectedVideo?.videoUrl || ''}
-                    ref={folderPlayerRef}
-                    className="detail-player"
-                    src={folderSelectedAnalysis?.videoUrl || folderSelectedVideo?.videoUrl || ''}
-                    controls
-                    playsInline
-                    preload="metadata"
-                  />
-
-                  <div className="detail-header">
-                    <div className="detail-header-text">
-                      <h2>{(folderSelectedVideo || folderSelectedAnalysis)?.title || (folderSelectedVideo || folderSelectedAnalysis)?.fileName || '영상 정보'}</h2>
-                      <p className="detail-file-name">{(folderSelectedVideo || folderSelectedAnalysis)!.fileName}</p>
-                    </div>
-                    <button
-                      className="ghost-button small"
-                      onClick={() => {
-                        const v = folderSelectedVideo || folderSelectedAnalysis
-                        if (v) window.codexVideoAnalyzer.showItemInFolder(v.absolutePath)
-                      }}
-                    >
-                      파일 위치
-                    </button>
-                  </div>
-                  <div className="detail-inline-meta">
-                    <span className="detail-relative-path">
-                      {formatVideoFolderPath((folderSelectedVideo || folderSelectedAnalysis)!.absolutePath, rootFolder)}
-                    </span>
-                    <span className="detail-duration-chip">
-                      {formatDuration((folderSelectedVideo || folderSelectedAnalysis)!.durationSeconds)}
-                    </span>
-                  </div>
-
-                  {folderSelectedIsAnalyzed && folderSelectedAnalysis ? (
-                    <>
-                      <div className="detail-section">
-                        <div className="detail-section-head">
-                          <h3>키워드 점프</h3>
-                          {folderSelectedAnalysis.keywordMoments.length === 0 && folderSelectedAnalysis.keywords.length > 0 && (
-                            <span className="detail-section-note">시간 정보 없음</span>
-                          )}
-                        </div>
-                        <div className="pill-row">
-                          {getKeywordJumpTargets(folderSelectedAnalysis).length > 0 ? (
-                            getKeywordJumpTargets(folderSelectedAnalysis).map((keywordMoment) =>
-                              keywordMoment.timeSeconds != null ? (
-                                <button
-                                  key={`${folderSelectedAnalysis.absolutePath}-${keywordMoment.label}-${keywordMoment.timeSeconds}`}
-                                  type="button"
-                                  className="mini-pill clickable jump-pill"
-                                  onClick={() =>
-                                    handleJumpToKeyword(folderSelectedAnalysis, keywordMoment)
-                                  }
-                                >
-                                  <span>{keywordMoment.label}</span>
-                                  <span className="jump-pill-time">
-                                    {formatDuration(keywordMoment.timeSeconds)}
-                                  </span>
-                                </button>
-                              ) : (
-                                <span
-                                  key={`${folderSelectedAnalysis.absolutePath}-${keywordMoment.label}`}
-                                  className="mini-pill"
-                                >
-                                  {keywordMoment.label}
-                                </span>
-                              ),
-                            )
-                          ) : (
-                            <span className="mini-pill">키워드 없음</span>
-                          )}
-                        </div>
-                        {folderSelectedAnalysis.keywords.length > 0 && folderSelectedAnalysis.keywordMoments.length === 0 && (
-                          <p className="muted">
-                            기존 분석 결과에는 키워드 시점 정보가 없습니다. 다시 분석하면 바로 점프할 수 있습니다.
-                          </p>
-                        )}
-                      </div>
-                      <div className="detail-section">
-                        <h3>요약</h3>
-                        <p>{folderSelectedAnalysis.summary}</p>
-                      </div>
-                      <div className="detail-section">
-                        <h3>세부 설명</h3>
-                        <ul>
-                          {folderSelectedAnalysis.details.map((detail) => (
-                            <li key={detail}>{detail}</li>
-                          ))}
-                        </ul>
-                      </div>
-                      <div className="detail-section">
-                        <h3>카테고리</h3>
-                        <div className="pill-row">
-                          {folderSelectedAnalysis.categories.length > 0 ? (
-                            folderSelectedAnalysis.categories.map((tag) => (
-                              <span key={`${folderSelectedAnalysis.absolutePath}-${tag}`} className="mini-pill">
-                                {tag}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="mini-pill">카테고리 없음</span>
-                          )}
-                        </div>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="detail-section">
-                      <p className="muted">이 영상은 아직 분석되지 않았습니다.</p>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <div className="empty-card detail-empty">
-                  영상을 선택하면 상세 정보가 여기에 표시됩니다.
-                </div>
-              )}
-            </aside>
-          </div>
+          <FolderExplorerPage
+            folderTree={folderTree}
+            expandedPathSet={expandedPathSet}
+            selectedFolderPath={selectedFolderPath}
+            selectedFolderNode={selectedFolderNode}
+            folderVideos={folderVideos}
+            folderSelectedVideoPath={folderSelectedVideoPath}
+            folderSelectedVideo={folderSelectedVideo}
+            folderSelectedAnalysis={folderSelectedAnalysis}
+            folderSelectedIsAnalyzed={folderSelectedIsAnalyzed}
+            rootFolder={rootFolder}
+            analyzedFolderVideoCount={analyzedFolderVideoCount}
+            pendingFolderVideoCount={pendingFolderVideoCount}
+            isAnalyzing={isAnalyzing}
+            isBusy={isBusy}
+            analysisPrerequisitesReady={analysisPrerequisitesReady}
+            folderPlayerRef={folderPlayerRef}
+            onToggleFolder={handleToggleFolder}
+            onSelectFolder={(folderPath) => void loadFolderVideosForPath(folderPath, false)}
+            onRefresh={() => void refreshWorkspace(rootFolder, selectedFolderPath || rootFolder, true)}
+            onCancel={handleCancel}
+            onAnalyzeSelectedFolder={handleAnalyzeSelectedFolder}
+            onSelectVideo={setFolderSelectedVideoPath}
+            onVideoFileDragStart={handleVideoFileDragStart}
+            onShowItemInFolder={(targetPath) => void window.codexVideoAnalyzer.showItemInFolder(targetPath)}
+            onJumpToKeyword={handleJumpToKeyword}
+            formatFolderPath={formatFolderPath}
+            formatDuration={formatDuration}
+            formatVideoFolderPath={formatVideoFolderPath}
+            getKeywordJumpTargets={getKeywordJumpTargets}
+          />
         )}
 
-        {/* ══════ 분석 라이브러리 뷰 ══════ */}
         {viewMode === 'library' && (
-          <div className="library-view">
-            {/* 좌측: 카드 그리드 */}
-            <section className="library-content">
-              <div className="content-header">
-                <div className="filter-row">
-                  <input
-                    className="search-input"
-                    value={searchInput}
-                    onChange={(event) => setSearchInput(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
-                        addSearchFilter(searchInput)
-                      }
-                    }}
-                    placeholder="검색어 입력 후 Enter"
-                  />
-                  <button className="ghost-button small filter-clear-btn" onClick={() => setSearchFilters([])}>
-                    초기화
-                  </button>
-                </div>
-                {searchFilters.length > 0 && (
-                  <div className="filter-chips">
-                    {searchFilters.map((filter) => (
-                      <button
-                        key={filter}
-                        className="filter-chip"
-                        onClick={() => removeSearchFilter(filter)}
-                      >
-                        {filter}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="library-grid">
-                {filteredAnalysisVideos.map((video) => (
-                  <button
-                    key={video.absolutePath}
-                    className={`lib-card ${video.absolutePath === librarySelectedVideoPath ? 'active' : ''}`}
-                    type="button"
-                    draggable
-                    onClick={() => setLibrarySelectedVideoPath(video.absolutePath)}
-                    onDragStart={(event) =>
-                      handleVideoFileDragStart(event, video.absolutePath, video.sampleImagePath)
-                    }
-                  >
-                    <VideoThumbnail
-                      videoUrl={video.videoUrl}
-                      sampleImageUrl={video.sampleImageUrl}
-                      title={video.title}
-                      badgeText={video.fileName}
-                      badgeVariant="filename"
-                      durationText={formatDuration(video.durationSeconds)}
-                    />
-                    <div className="lib-card-body">
-                      <strong>{video.title}</strong>
-                      <span className="lib-card-meta">
-                        {video.relativePath.includes('/') ? video.relativePath.substring(0, video.relativePath.lastIndexOf('/')) + '/' : './'}
-                      </span>
-                      {video.keywords.length > 0 ? (
-                        <div className="pill-row">
-                          {video.keywords.slice(0, 4).map((keyword) => (
-                            <span key={`${video.absolutePath}-${keyword}`} className="mini-pill">
-                              {keyword}
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <span className="lib-card-empty-keywords">키워드 없음</span>
-                      )}
-                    </div>
-                  </button>
-                ))}
-
-                {filteredAnalysisVideos.length === 0 && (
-                  <div className="empty-card">
-                    {analysis?.videos.length
-                      ? '검색 조건에 맞는 분석 결과가 없습니다.'
-                      : '아직 분석된 영상이 없습니다. 폴더 탐색에서 분석을 시작해 주세요.'}
-                  </div>
-                )}
-              </div>
-            </section>
-
-            {/* 우측: 상세 인스펙터 */}
-            <aside className="detail-pane panel">
-              {librarySelectedVideo ? (
-                <>
-                  <video
-                    key={librarySelectedVideo.videoUrl}
-                    ref={libraryPlayerRef}
-                    className="detail-player"
-                    src={librarySelectedVideo.videoUrl}
-                    controls
-                    playsInline
-                    preload="metadata"
-                  />
-
-                  <div className="detail-header">
-                    <div className="detail-header-text">
-                      <h2>{librarySelectedVideo.title}</h2>
-                      <p className="detail-file-name">{librarySelectedVideo.fileName}</p>
-                    </div>
-                    <button
-                      className="ghost-button small"
-                      onClick={() => window.codexVideoAnalyzer.showItemInFolder(librarySelectedVideo.absolutePath)}
-                    >
-                      파일 위치
-                    </button>
-                  </div>
-                  <div className="detail-inline-meta">
-                    <span className="detail-relative-path">
-                      {formatVideoFolderPath(librarySelectedVideo.absolutePath, rootFolder)}
-                    </span>
-                    <span className="detail-duration-chip">
-                      {formatDuration(librarySelectedVideo.durationSeconds)}
-                    </span>
-                  </div>
-
-                  <div className="detail-section">
-                    <div className="detail-section-head">
-                      <h3>키워드 점프</h3>
-                      {librarySelectedVideo.keywordMoments.length === 0 && librarySelectedVideo.keywords.length > 0 && (
-                        <span className="detail-section-note">시간 정보 없음</span>
-                      )}
-                    </div>
-                    <div className="pill-row">
-                      {getKeywordJumpTargets(librarySelectedVideo).length > 0 ? (
-                        getKeywordJumpTargets(librarySelectedVideo).map((keywordMoment) =>
-                          keywordMoment.timeSeconds != null ? (
-                            <button
-                              key={`${librarySelectedVideo.absolutePath}-${keywordMoment.label}-${keywordMoment.timeSeconds}`}
-                              type="button"
-                              className="mini-pill clickable jump-pill"
-                              onClick={() => handleJumpToKeyword(librarySelectedVideo, keywordMoment)}
-                            >
-                              <span>{keywordMoment.label}</span>
-                              <span className="jump-pill-time">
-                                {formatDuration(keywordMoment.timeSeconds)}
-                              </span>
-                            </button>
-                          ) : (
-                            <span
-                              key={`${librarySelectedVideo.absolutePath}-${keywordMoment.label}`}
-                              className="mini-pill"
-                            >
-                              {keywordMoment.label}
-                            </span>
-                          ),
-                        )
-                      ) : (
-                        <span className="mini-pill">키워드 없음</span>
-                      )}
-                    </div>
-                    {librarySelectedVideo.keywords.length > 0 && librarySelectedVideo.keywordMoments.length === 0 && (
-                      <p className="muted">
-                        기존 분석 결과에는 키워드 시점 정보가 없습니다. 다시 분석하면 바로 점프할 수 있습니다.
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="detail-section">
-                    <h3>요약</h3>
-                    <p>{librarySelectedVideo.summary}</p>
-                  </div>
-
-                  <div className="detail-section">
-                    <h3>세부 설명</h3>
-                    <ul>
-                      {librarySelectedVideo.details.map((detail) => (
-                        <li key={detail}>{detail}</li>
-                      ))}
-                    </ul>
-                  </div>
-
-                  <div className="detail-section">
-                    <h3>카테고리</h3>
-                    <div className="pill-row">
-                      {librarySelectedVideo.categories.length > 0 ? (
-                        librarySelectedVideo.categories.map((tag) => (
-                          <button
-                            key={`${librarySelectedVideo.absolutePath}-${tag}`}
-                            type="button"
-                            className="mini-pill clickable"
-                            onClick={() => addSearchFilter(tag)}
-                          >
-                            {tag}
-                          </button>
-                        ))
-                      ) : (
-                        <span className="mini-pill">카테고리 없음</span>
-                      )}
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <div className="empty-card detail-empty">
-                  분석된 영상을 선택하면 상세 정보가 여기에 표시됩니다.
-                </div>
-              )}
-            </aside>
-          </div>
+          <AnalysisLibraryPage
+            analysis={analysis}
+            filteredAnalysisVideos={filteredAnalysisVideos}
+            visibleVideos={visibleVideos}
+            visibleCount={visibleCount}
+            searchInput={searchInput}
+            searchFilters={searchFilters}
+            librarySelectedVideoPath={librarySelectedVideoPath}
+            librarySelectedVideo={librarySelectedVideo}
+            rootFolder={rootFolder}
+            gridRef={gridRef}
+            sentinelRef={sentinelRef}
+            libraryPlayerRef={libraryPlayerRef}
+            onSearchInputChange={setSearchInput}
+            onAddSearchFilter={addSearchFilter}
+            onRemoveSearchFilter={removeSearchFilter}
+            onClearSearchFilters={() => setSearchFilters([])}
+            onSelectVideo={setLibrarySelectedVideoPath}
+            onVideoFileDragStart={handleVideoFileDragStart}
+            onShowItemInFolder={(targetPath) => void window.codexVideoAnalyzer.showItemInFolder(targetPath)}
+            onJumpToKeyword={handleJumpToKeyword}
+            formatDuration={formatDuration}
+            formatVideoFolderPath={formatVideoFolderPath}
+            getKeywordJumpTargets={getKeywordJumpTargets}
+          />
         )}
       </main>
     </div>
@@ -1298,10 +931,16 @@ function mergeExpandedFolderPaths(
   }
 
   const next = new Set(currentPaths)
-  for (const path of findAncestorPaths(tree, selectedFolderPath || tree.path)) {
+
+  if (currentPaths.length === 0) {
+    next.add(tree.path)
+  }
+
+  const ancestorPaths = findAncestorPaths(tree, selectedFolderPath || tree.path).slice(0, -1)
+  for (const path of ancestorPaths) {
     next.add(path)
   }
-  next.add(tree.path)
+
   return [...next]
 }
 
@@ -1451,6 +1090,10 @@ function getFallbackSettings(): ToolSettings {
     codexCommand: 'codex',
     ffmpegCommand: 'ffmpeg',
     lastRootPath: '',
+    codexModel: 'gpt-5.4',
+    codexReasoningEffort: 'medium',
+    maxParallelAnalysis: 5,
+    consecutiveFailureLimit: 5,
   }
 }
 

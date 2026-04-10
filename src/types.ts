@@ -1,7 +1,13 @@
+export type CodexReasoningEffort = 'minimal' | 'low' | 'medium' | 'high'
+
 export interface ToolSettings {
   codexCommand: string
   ffmpegCommand: string
   lastRootPath: string
+  codexModel: string
+  codexReasoningEffort: CodexReasoningEffort
+  maxParallelAnalysis: number
+  consecutiveFailureLimit: number
 }
 
 export interface CommandCheck {
