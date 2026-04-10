@@ -1,9 +1,9 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net, protocol, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, protocol, shell } from 'electron'
 import { spawn } from 'node:child_process'
-import { mkdirSync, promises as fs } from 'node:fs'
+import { createReadStream, mkdirSync, promises as fs } from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
-import { pathToFileURL } from 'node:url'
+import { Readable } from 'node:stream'
 import {
   collectFolderTree,
   collectVideoFolders,
@@ -58,6 +58,33 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 configureStoragePaths()
+
+const LOCAL_ASSET_CONTENT_TYPES = {
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.webm': 'video/webm',
+  '.mkv': 'video/x-matroska',
+  '.avi': 'video/x-msvideo',
+  '.wmv': 'video/x-ms-wmv',
+  '.flv': 'video/x-flv',
+  '.ogv': 'video/ogg',
+  '.ts': 'video/mp2t',
+  '.mpg': 'video/mpeg',
+  '.mpeg': 'video/mpeg',
+  '.3gp': 'video/3gpp',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+}
+
+function getLocalAssetContentType(filePath) {
+  const ext = path.extname(filePath).toLowerCase()
+  return LOCAL_ASSET_CONTENT_TYPES[ext] || 'application/octet-stream'
+}
 
 function isWindows() {
   return process.platform === 'win32'
@@ -1881,13 +1908,137 @@ function createWindow() {
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(buildAppMenu())
-  protocol.handle(LOCAL_ASSET_SCHEME, (request) => {
-    const requestUrl = new URL(request.url)
-    const filePath = requestUrl.searchParams.get('path')
-    if (!filePath) {
-      return new Response('Missing path', { status: 400 })
+  protocol.handle(LOCAL_ASSET_SCHEME, async (request) => {
+    try {
+      const requestUrl = new URL(request.url)
+      const filePath = requestUrl.searchParams.get('path')
+      if (!filePath) {
+        return new Response('Missing path', { status: 400 })
+      }
+
+      let stat
+      try {
+        stat = await fs.stat(filePath)
+      } catch {
+        return new Response('Not Found', { status: 404 })
+      }
+      if (!stat.isFile()) {
+        return new Response('Not a file', { status: 400 })
+      }
+
+      const totalSize = stat.size
+      const contentType = getLocalAssetContentType(filePath)
+      const rangeHeader = request.headers.get('range') || request.headers.get('Range')
+
+      if (request.method === 'HEAD') {
+        return new Response(null, {
+          status: 200,
+          headers: {
+            'Content-Type': contentType,
+            'Content-Length': String(totalSize),
+            'Accept-Ranges': 'bytes',
+          },
+        })
+      }
+
+      if (rangeHeader) {
+        const match = /^bytes=(\d*)-(\d*)$/i.exec(rangeHeader.trim())
+        if (!match) {
+          return new Response('Invalid Range', {
+            status: 416,
+            headers: {
+              'Content-Range': `bytes */${totalSize}`,
+              'Accept-Ranges': 'bytes',
+            },
+          })
+        }
+
+        const startRaw = match[1]
+        const endRaw = match[2]
+        let start
+        let end
+
+        if (startRaw === '' && endRaw === '') {
+          return new Response('Invalid Range', {
+            status: 416,
+            headers: {
+              'Content-Range': `bytes */${totalSize}`,
+              'Accept-Ranges': 'bytes',
+            },
+          })
+        }
+
+        if (startRaw === '') {
+          // Suffix range: last N bytes
+          const suffixLength = Number(endRaw)
+          if (!Number.isFinite(suffixLength) || suffixLength <= 0) {
+            return new Response('Invalid Range', {
+              status: 416,
+              headers: {
+                'Content-Range': `bytes */${totalSize}`,
+                'Accept-Ranges': 'bytes',
+              },
+            })
+          }
+          start = Math.max(0, totalSize - suffixLength)
+          end = totalSize - 1
+        } else {
+          start = Number(startRaw)
+          end = endRaw === '' ? totalSize - 1 : Number(endRaw)
+        }
+
+        if (
+          !Number.isFinite(start) ||
+          !Number.isFinite(end) ||
+          start < 0 ||
+          end < start ||
+          start >= totalSize
+        ) {
+          return new Response('Range Not Satisfiable', {
+            status: 416,
+            headers: {
+              'Content-Range': `bytes */${totalSize}`,
+              'Accept-Ranges': 'bytes',
+            },
+          })
+        }
+
+        if (end >= totalSize) {
+          end = totalSize - 1
+        }
+
+        const chunkSize = end - start + 1
+        const nodeStream = createReadStream(filePath, { start, end })
+        const webStream = Readable.toWeb(nodeStream)
+
+        return new Response(webStream, {
+          status: 206,
+          headers: {
+            'Content-Type': contentType,
+            'Content-Length': String(chunkSize),
+            'Content-Range': `bytes ${start}-${end}/${totalSize}`,
+            'Accept-Ranges': 'bytes',
+            'Cache-Control': 'no-cache',
+          },
+        })
+      }
+
+      const nodeStream = createReadStream(filePath)
+      const webStream = Readable.toWeb(nodeStream)
+      return new Response(webStream, {
+        status: 200,
+        headers: {
+          'Content-Type': contentType,
+          'Content-Length': String(totalSize),
+          'Accept-Ranges': 'bytes',
+          'Cache-Control': 'no-cache',
+        },
+      })
+    } catch (error) {
+      return new Response(`Internal error: ${error instanceof Error ? error.message : String(error)}`, {
+        status: 500,
+      })
     }
-    return net.fetch(pathToFileURL(filePath).toString(), { headers: request.headers, method: request.method })
   })
 
   createWindow()
