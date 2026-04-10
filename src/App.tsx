@@ -981,13 +981,20 @@ function formatVideoFolderPath(absolutePath: string, rootFolder: string) {
 function getKeywordJumpTargets(video: AnalysisVideo): KeywordMoment[] {
   const momentByLabel = new Map(video.keywordMoments.map((keywordMoment) => [keywordMoment.label, keywordMoment]))
 
-  return video.keywords.map(
+  const targets = video.keywords.map(
     (keyword) =>
       momentByLabel.get(keyword) ?? {
         label: keyword,
         timeSeconds: null,
       },
   )
+
+  return targets.sort((a, b) => {
+    if (a.timeSeconds == null && b.timeSeconds == null) return 0
+    if (a.timeSeconds == null) return 1
+    if (b.timeSeconds == null) return -1
+    return a.timeSeconds - b.timeSeconds
+  })
 }
 
 function seekVideoPlayer(player: HTMLVideoElement | null, timeSeconds: number) {

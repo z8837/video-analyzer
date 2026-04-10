@@ -708,6 +708,83 @@
   line-height: 1.2;
 }
 
+.keyword-jump-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.keyword-jump-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 4px;
+  border: 1px solid rgba(137, 157, 183, 0.24);
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.3;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, transform 0.1s ease;
+}
+
+.keyword-jump-chip:hover {
+  background: #eef3fa;
+  border-color: rgba(68, 107, 170, 0.5);
+  transform: translateY(-1px);
+}
+
+.keyword-jump-chip:active {
+  transform: translateY(0);
+}
+
+.keyword-jump-chip:focus-visible {
+  outline: none;
+  border-color: rgba(68, 107, 170, 0.7);
+  box-shadow: 0 0 0 3px rgba(68, 107, 170, 0.2);
+}
+
+.keyword-jump-chip-time {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(68, 107, 170, 0.16);
+  color: #2e4d7a;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.keyword-jump-chip:hover .keyword-jump-chip-time {
+  background: rgba(68, 107, 170, 0.24);
+  color: #1f3a66;
+}
+
+.keyword-jump-chip-label {
+  color: var(--text);
+}
+
+.keyword-jump-extra {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(141, 158, 181, 0.3);
+}
+
+.keyword-jump-extra-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
 .status-badge {
   display: inline-flex;
   align-items: center;
@@ -732,7 +809,7 @@
 
 .folder-view {
   display: grid;
-  grid-template-columns: 290px minmax(0, 1fr) 372px;
+  grid-template-columns: 290px minmax(0, 1fr) 420px;
   gap: 18px;
   flex: 1;
   min-height: 0;
@@ -1245,7 +1322,7 @@
 
 .library-view {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 372px;
+  grid-template-columns: minmax(0, 1fr) 420px;
   gap: 18px;
   flex: 1;
   min-height: 0;
@@ -1501,11 +1578,11 @@
 
 @media (max-width: 1480px) {
   .folder-view {
-    grid-template-columns: 270px minmax(0, 1fr) 340px;
+    grid-template-columns: 270px minmax(0, 1fr) 384px;
   }
 
   .library-view {
-    grid-template-columns: minmax(0, 1fr) 344px;
+    grid-template-columns: minmax(0, 1fr) 388px;
   }
 }
 

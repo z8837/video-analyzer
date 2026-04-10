@@ -1,5 +1,6 @@
 import type { DragEvent, RefObject } from 'react'
 import { FolderTreeBranch } from '../components/FolderTreeBranch'
+import { KeywordJumpSection } from '../components/KeywordJumpSection'
 import { VideoThumbnail } from '../components/VideoThumbnail'
 import type { AnalysisVideo, FolderTreeNode, FolderVideoItem, KeywordMoment } from '../types'
 
@@ -214,49 +215,12 @@ export function FolderExplorerPage({
 
             {folderSelectedIsAnalyzed && folderSelectedAnalysis ? (
               <>
-                <div className="detail-section">
-                  <div className="detail-section-head">
-                    <h3>키워드 점프</h3>
-                    {folderSelectedAnalysis.keywordMoments.length === 0 &&
-                      folderSelectedAnalysis.keywords.length > 0 && (
-                        <span className="detail-section-note">시간 정보 없음</span>
-                      )}
-                  </div>
-                  <div className="pill-row">
-                    {getKeywordJumpTargets(folderSelectedAnalysis).length > 0 ? (
-                      getKeywordJumpTargets(folderSelectedAnalysis).map((keywordMoment) =>
-                        keywordMoment.timeSeconds != null ? (
-                          <button
-                            key={`${folderSelectedAnalysis.absolutePath}-${keywordMoment.label}-${keywordMoment.timeSeconds}`}
-                            type="button"
-                            className="mini-pill clickable jump-pill"
-                            onClick={() => onJumpToKeyword(folderSelectedAnalysis, keywordMoment)}
-                          >
-                            <span>{keywordMoment.label}</span>
-                            <span className="jump-pill-time">
-                              {formatDuration(keywordMoment.timeSeconds)}
-                            </span>
-                          </button>
-                        ) : (
-                          <span
-                            key={`${folderSelectedAnalysis.absolutePath}-${keywordMoment.label}`}
-                            className="mini-pill"
-                          >
-                            {keywordMoment.label}
-                          </span>
-                        ),
-                      )
-                    ) : (
-                      <span className="mini-pill">키워드 없음</span>
-                    )}
-                  </div>
-                  {folderSelectedAnalysis.keywords.length > 0 &&
-                    folderSelectedAnalysis.keywordMoments.length === 0 && (
-                      <p className="muted">
-                        기존 분석 결과에는 키워드 시점 정보가 없습니다. 다시 분석하면 바로 점프할 수 있습니다.
-                      </p>
-                    )}
-                </div>
+                <KeywordJumpSection
+                  video={folderSelectedAnalysis}
+                  keywordMoments={getKeywordJumpTargets(folderSelectedAnalysis)}
+                  formatDuration={formatDuration}
+                  onJump={onJumpToKeyword}
+                />
                 <div className="detail-section">
                   <h3>요약</h3>
                   <p>{folderSelectedAnalysis.summary}</p>
