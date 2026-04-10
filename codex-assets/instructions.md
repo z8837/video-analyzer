@@ -87,6 +87,7 @@ Required JSON fields:
 
 Field rules:
 - `source`: project-root-relative video path.
+- Copy `source` exactly from the task file. Do not translate, normalize, re-encode, or reconstruct it from folder and file names.
 - `fileName`: original file name with extension.
 - `title`: short Korean display title.
 - `summary`: 1 to 2 sentence Korean summary.
@@ -108,6 +109,7 @@ Field rules:
 
 Windows UTF-8 rules:
 - Keep Korean text out of PowerShell command strings, here-strings, and console output when possible.
+- If Windows console text displays a Korean path incorrectly, still use the exact `source` string from the task JSON.
 - Never write the final markdown files yourself on Windows.
 - Do not embed Korean literals inside PowerShell commands.
 - If you use Python for probing or helper parsing, keep the command text ASCII-only when possible.

@@ -921,6 +921,7 @@ function buildPromptWithContext(projectRootPath, sourceFolderPath, resumeContext
     'Prefer keywords tied to distinct scene elements or moments that help the user jump to a meaningful point in the timeline.',
     'Each analyses item must contain source, fileName, title, summary, details, categories, keywords, keywordMoments, durationSeconds, width, height, fps, hasAudio, sampleImage, generatedAt, model, reasoningEffort.',
     'The analyses array must contain one item for every pending video from the task file and source must exactly match the task file.',
+    'Copy source exactly from the task JSON; do not translate, normalize, re-encode, or reconstruct Korean folder/file names.',
   ].join('\n')
 }
 

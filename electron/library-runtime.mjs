@@ -127,6 +127,38 @@ export function parseAnalysisBatchResponse(responseText, defaults = {}) {
   }
 }
 
+function getRecordFileNameCandidates(record) {
+  const candidates = []
+
+  if (typeof record.fileName === 'string' && record.fileName.trim()) {
+    candidates.push(path.posix.basename(toPosixPath(record.fileName.trim())))
+  }
+
+  if (typeof record.source === 'string' && record.source.trim()) {
+    candidates.push(path.posix.basename(toPosixPath(record.source.trim())))
+  }
+
+  return new Set(candidates.filter(Boolean))
+}
+
+function findPendingVideoForRecord(record, pendingVideos, pendingBySource) {
+  const exactMatch = pendingBySource.get(record.source)
+  if (exactMatch) {
+    return exactMatch
+  }
+
+  const fileNameCandidates = getRecordFileNameCandidates(record)
+  if (fileNameCandidates.size === 0) {
+    return null
+  }
+
+  const matchingVideos = pendingVideos.filter((pendingVideo) =>
+    fileNameCandidates.has(path.posix.basename(toPosixPath(pendingVideo.source))),
+  )
+
+  return matchingVideos.length === 1 ? matchingVideos[0] : null
+}
+
 export async function writePendingAnalysesFromReport(
   projectRootPath,
   resumeContext,
@@ -140,20 +172,28 @@ export async function writePendingAnalysesFromReport(
   const writtenSources = new Set()
 
   for (const record of analyses) {
-    const pendingVideo = pendingBySource.get(record.source)
+    const pendingVideo = findPendingVideoForRecord(
+      record,
+      resumeContext.pendingVideos,
+      pendingBySource,
+    )
     if (!pendingVideo) {
       throw new Error(`Codex가 요청하지 않은 영상 결과를 반환했습니다: ${record.source}`)
+    }
+    if (writtenSources.has(pendingVideo.source)) {
+      throw new Error(`Codex가 동일한 영상 결과를 중복 반환했습니다: ${pendingVideo.source}`)
     }
 
     const outputPath = path.join(projectRootPath, pendingVideo.outputMarkdown)
     const nextRecord = {
       ...record,
+      source: pendingVideo.source,
       fileName: pendingVideo.fileName,
       folderRelativePath: pendingVideo.folderRelativePath,
     }
 
     await writeText(outputPath, buildMarkdownFromRecord(nextRecord))
-    writtenSources.add(record.source)
+    writtenSources.add(pendingVideo.source)
   }
 
   const missingVideos = resumeContext.pendingVideos.filter(

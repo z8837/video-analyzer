@@ -11,12 +11,14 @@ type AnalysisLibraryPageProps = {
   librarySelectedVideoPath: string
   librarySelectedVideo: AnalysisVideo | null | undefined
   rootFolder: string
+  isRefreshing: boolean
   gridRef: RefObject<HTMLDivElement | null>
   libraryPlayerRef: RefObject<HTMLVideoElement | null>
   onSearchInputChange: (value: string) => void
   onAddSearchFilter: (text: string) => void
   onRemoveSearchFilter: (filter: string) => void
   onClearSearchFilters: () => void
+  onRefresh: () => void
   onSelectVideo: (absolutePath: string) => void
   onVideoFileDragStart: (event: DragEvent<HTMLButtonElement>, filePath: string, iconPath?: string) => void
   onShowItemInFolder: (targetPath: string) => void
@@ -34,12 +36,14 @@ export function AnalysisLibraryPage({
   librarySelectedVideoPath,
   librarySelectedVideo,
   rootFolder,
+  isRefreshing,
   gridRef,
   libraryPlayerRef,
   onSearchInputChange,
   onAddSearchFilter,
   onRemoveSearchFilter,
   onClearSearchFilters,
+  onRefresh,
   onSelectVideo,
   onVideoFileDragStart,
   onShowItemInFolder,
@@ -52,12 +56,23 @@ export function AnalysisLibraryPage({
     <div className="library-view">
       <section className="library-content">
         <div className="content-header">
-          <div className="library-stats">
-            <span className="stats-label">분석된 영상</span>
-            <span className="stats-count">{filteredAnalysisVideos.length}</span>
-            {searchFilters.length > 0 && (
-              <span className="stats-total">/ {analysis?.videos.length ?? 0}</span>
-            )}
+          <div className="library-header-top">
+            <div className="library-stats">
+              <span className="stats-label">분석된 영상</span>
+              <span className="stats-count">{filteredAnalysisVideos.length}</span>
+              {searchFilters.length > 0 && (
+                <span className="stats-total">/ {analysis?.videos.length ?? 0}</span>
+              )}
+            </div>
+            <button
+              type="button"
+              className="ghost-button small library-refresh-button"
+              onClick={onRefresh}
+              disabled={!rootFolder || isRefreshing}
+              title="분석 라이브러리 새로고침"
+            >
+              {isRefreshing ? '새로고침 중...' : '새로고침'}
+            </button>
           </div>
           <div className="filter-row">
             <input

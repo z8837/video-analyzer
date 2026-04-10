@@ -1516,12 +1516,28 @@
   align-items: stretch;
 }
 
+.library-header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
 .library-stats {
   display: flex;
   align-items: baseline;
   gap: 8px;
   margin-bottom: 12px;
   padding: 0 2px;
+}
+
+.library-header-top .library-stats {
+  margin-bottom: 0;
+}
+
+.library-refresh-button {
+  flex: 0 0 auto;
 }
 
 .stats-label {

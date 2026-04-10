@@ -903,12 +903,14 @@ function App() {
             librarySelectedVideoPath={librarySelectedVideoPath}
             librarySelectedVideo={librarySelectedVideo}
             rootFolder={rootFolder}
+            isRefreshing={isBusy}
             gridRef={gridRef}
             libraryPlayerRef={libraryPlayerRef}
             onSearchInputChange={setSearchInput}
             onAddSearchFilter={addSearchFilter}
             onRemoveSearchFilter={removeSearchFilter}
             onClearSearchFilters={() => setSearchFilters([])}
+            onRefresh={() => void refreshWorkspace(rootFolder, selectedFolderPath || rootFolder, true)}
             onSelectVideo={setLibrarySelectedVideoPath}
             onVideoFileDragStart={handleVideoFileDragStart}
             onShowItemInFolder={(targetPath) => void window.codexVideoAnalyzer.showItemInFolder(targetPath)}
