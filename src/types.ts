@@ -205,6 +205,12 @@ export type AppEvent = {
   settings: ToolSettings
 }
 
+export interface EventsLogDownloadResult {
+  ok: boolean
+  cancelled?: boolean
+  filePath?: string
+}
+
 export interface CodexVideoAnalyzerApi {
   getSettings: () => Promise<ToolSettings>
   saveSettings: (patch: Partial<ToolSettings>) => Promise<ToolSettings>
@@ -218,6 +224,7 @@ export interface CodexVideoAnalyzerApi {
   loadAnalysisProgress: (folderPath: string) => Promise<AnalysisProgress>
   startAnalysis: (folderPath: string) => Promise<{ ok: boolean }>
   cancelAnalysis: () => Promise<{ ok: boolean }>
+  downloadEventsLog: () => Promise<EventsLogDownloadResult>
   startDragFile: (filePath: string, iconPath?: string) => void
   showItemInFolder: (targetPath: string) => Promise<boolean>
   openPath: (targetPath: string) => Promise<string>

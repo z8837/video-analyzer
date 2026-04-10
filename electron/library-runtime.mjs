@@ -14,7 +14,6 @@ import {
   readJsonIfExists,
   readTextIfExists,
   toPosixPath,
-  writeJson,
   writeText,
   buildMarkdownFromRecord,
 } from './library-data.mjs'
@@ -405,21 +404,6 @@ export async function getResumeContext(projectRootPath, sourceFolderPath) {
     reusableEntries,
     pendingVideos,
   }
-}
-
-export async function writeTaskFile(projectRootPath, resumeContext) {
-  const { taskPath } = getAnalyzePaths(projectRootPath)
-  await writeJson(taskPath, {
-    schemaVersion: 1,
-    generatedAt: resumeContext.generatedAt,
-    projectRootPath,
-    sourceFolderPath: resumeContext.sourceFolderPath,
-    sourceFolderRelativePath: resumeContext.folderRelativePath,
-    totalFiles: resumeContext.totalFiles,
-    reusableCount: resumeContext.reusableCount,
-    pendingCount: resumeContext.pendingCount,
-    pendingVideos: resumeContext.pendingVideos,
-  })
 }
 
 export async function getCompletedPendingSources(projectRootPath, pendingVideos) {

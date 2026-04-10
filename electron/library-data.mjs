@@ -43,9 +43,7 @@ export function getAnalyzePaths(projectRootPath) {
   return {
     analyzeDir,
     libraryDir: path.join(analyzeDir, '_library'),
-    runsDir: path.join(analyzeDir, 'runs'),
     progressPath: path.join(analyzeDir, 'progress.json'),
-    taskPath: path.join(analyzeDir, '_task.json'),
     legacyResultsPath: path.join(analyzeDir, 'results.json'),
   }
 }

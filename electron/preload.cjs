@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('codexVideoAnalyzer', {
     ipcRenderer.invoke('analysis:load-progress', folderPath),
   startAnalysis: (folderPath) => ipcRenderer.invoke('analysis:start', folderPath),
   cancelAnalysis: () => ipcRenderer.invoke('analysis:cancel'),
+  downloadEventsLog: () => ipcRenderer.invoke('analysis:download-events-log'),
   startDragFile: (filePath, iconPath) => ipcRenderer.send('shell:start-drag', { filePath, iconPath }),
   showItemInFolder: (targetPath) => ipcRenderer.invoke('shell:show-item', targetPath),
   openPath: (targetPath) => ipcRenderer.invoke('shell:open-path', targetPath),

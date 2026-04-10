@@ -77,6 +77,7 @@ function App() {
   const [showLog, setShowLog] = useState(false)
   const [codexRateLimits, setCodexRateLimits] = useState<CodexRateLimitsSnapshot | null>(null)
   const [isRefreshingCodexRateLimits, setIsRefreshingCodexRateLimits] = useState(false)
+  const [isDownloadingEventsLog, setIsDownloadingEventsLog] = useState(false)
   const deferredFilters = useDeferredValue(searchFilters)
   const folderPlayerRef = useRef<HTMLVideoElement | null>(null)
   const libraryPlayerRef = useRef<HTMLVideoElement | null>(null)
@@ -536,6 +537,22 @@ function App() {
     await window.codexVideoAnalyzer.cancelAnalysis()
   }
 
+  const handleDownloadEventsLog = async () => {
+    setIsDownloadingEventsLog(true)
+    setErrorMessage('')
+
+    try {
+      const result = await window.codexVideoAnalyzer.downloadEventsLog()
+      if (result.ok && result.filePath) {
+        setStatusMessage(`events.log 저장됨: ${result.filePath}`)
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error))
+    } finally {
+      setIsDownloadingEventsLog(false)
+    }
+  }
+
   const handleJumpToKeyword = (video: AnalysisVideo, keywordMoment: KeywordMoment) => {
     if (keywordMoment.timeSeconds == null) {
       return
@@ -840,6 +857,13 @@ function App() {
               <h2>실행 로그</h2>
               <div className="action-group">
                 <span className="status-inline">{statusMessage}</span>
+                <button
+                  className="ghost-button"
+                  onClick={handleDownloadEventsLog}
+                  disabled={isDownloadingEventsLog || logLines.length === 0}
+                >
+                  {isDownloadingEventsLog ? '저장 중...' : 'events.log 다운로드'}
+                </button>
                 <button className="ghost-button" onClick={() => setShowLog(false)}>닫기</button>
               </div>
             </div>

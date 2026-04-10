@@ -24,11 +24,10 @@
 
 1. 루트 폴더 선택 → 재귀적으로 비디오 파일 스캔
 2. "분석 시작" 클릭 → ffprobe로 각 비디오의 메타데이터(해상도, 길이, FPS 등) 사전 추출
-3. `analyze/_task.json`에 작업 정보 기록
-4. Codex CLI를 병렬 워커로 실행 (`codex exec`)
-5. Codex가 프레임을 추출/분석하고 JSON 결과 반환
-6. 결과를 파싱하여 `analyze/_library/{폴더}/{비디오}.md`로 저장
-7. 실시간 진행률을 IPC 이벤트로 렌더러에 전송
+3. Codex CLI를 병렬 워커로 실행 (`codex exec`)하고 worker별 작업 JSON은 프롬프트에 인라인으로 전달
+4. Codex가 프레임을 추출/분석하고 JSON 결과 반환
+5. 결과를 파싱하여 `analyze/_library/{폴더}/{비디오}.md`로 저장
+6. 실시간 진행률과 실행 로그를 IPC 이벤트로 렌더러에 전송
 
 ## 사전 요구사항
 
@@ -64,13 +63,10 @@
 ```
 <루트 폴더>/
   analyze/
-    _task.json              # 분석 작업 배치 (임시)
+    progress.json           # 분석 진행률
     _library/
       <폴더명>/
         <비디오명>.md        # 비디오별 분석 결과 (한국어)
-    runs/
-      <타임스탬프>/
-        run.json            # 실행 메타데이터
-        events.log          # 이벤트 로그
-        worker-*.stdout.log # 워커 표준 출력
 ```
+
+실행 로그는 분석 중 루트 폴더에 자동 저장하지 않습니다. 앱의 실행 로그 창에서 `events.log`만 사용자가 선택한 위치로 저장할 수 있습니다.

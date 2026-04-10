@@ -25,7 +25,6 @@ import {
   readLibraryEntries,
   readResolvedLibraryEntries,
   writePendingAnalysesFromReport,
-  writeTaskFile,
 } from './library-runtime.mjs'
 import {
   readLatestRateLimits,
@@ -48,6 +47,7 @@ const DEFAULT_DRAG_ICON_DATA_URL =
 
 let mainWindow = null
 let activeRun = null
+let latestEventsLogText = ''
 let latestCodexRateLimits = null
 let stopCodexRateLimitsWatcher = null
 
@@ -908,15 +908,10 @@ function buildPromptWithContext(projectRootPath, sourceFolderPath, resumeContext
     `Reuse count for this run: ${resumeContext.reusableCount}. Pending new analyses: ${resumeContext.pendingCount}.`,
     'Do not inspect unrelated repository files or scan the whole project.',
     'Do not create or update any markdown files yourself.',
-    'Do not create or update analyze/results.json, analyze/index.md, preview videos, or permanent sample-sheet images.',
+    'Do not create or update analyze/runs, task files, run metadata, logs, analyze/results.json, analyze/index.md, preview videos, or permanent sample-sheet images.',
     'Each pending video in the Task JSON has a pre-extracted "metadata" object with durationSeconds, width, height, fps, hasAudio. Use it directly instead of running ffprobe.',
     'Each pending video may also include sampleTimesSeconds. Use those timeline points when you extract representative frames.',
     'Keep the workflow short: extract a few representative frames with ffmpeg if needed, then describe what you see.',
-    'Use quiet ffmpeg output such as -hide_banner -loglevel error to avoid wasting tokens.',
-    'After extracting frames, print the full path of every generated .jpg file, one path per line. Do not print only the output directory.',
-    'Do not create temporary frame files under analyze/runs. Use the OS temp directory or a short-lived folder outside analyze/runs.',
-    'Do not attempt to delete temporary frame files or directories before the final response; rejected cleanup commands waste tokens.',
-    'Base the analysis only on the extracted frame images for this exact source. If you cannot inspect the extracted frames, say the visual content is unclear rather than guessing from prior context.',
     'On Windows, never embed Korean literals inside PowerShell command strings or here-strings.',
     'Keep Korean text only in your final response JSON. The desktop app will write the UTF-8 markdown files for you.',
     'Your final response must be exactly one JSON object and nothing else.',
@@ -970,7 +965,7 @@ function prefixLogMessage(prefix, message) {
     .join('\n')
 }
 
-function createRunDirectoryName(resumeContext) {
+function createAnalysisSessionId(resumeContext) {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
   const folderSegment =
     resumeContext.folderRelativePath === '.'
@@ -982,18 +977,8 @@ function createRunDirectoryName(resumeContext) {
   return `${timestamp}-${folderSegment}`
 }
 
-function getTempRunsRootPath() {
-  return path.join(app.getPath('temp'), 'codex-video-analyzer-runs')
-}
-
-function enqueueFileWrite(owner, key, filePath, contents) {
-  owner[key] = (owner[key] || Promise.resolve())
-    .then(() => fs.appendFile(filePath, contents, 'utf8'))
-    .catch(() => {
-      // Ignore log persistence failures and keep the run alive.
-    })
-
-  return owner[key]
+function getTempAnalysisRootPath() {
+  return path.join(app.getPath('temp'), 'codex-video-analyzer')
 }
 
 function createWorkerFileBase(workerIndex) {
@@ -1015,7 +1000,9 @@ function appendRunEventLog(runState, stream, message) {
     .map((line) => `[${timestamp}] [${stream}] ${line}`)
     .join('\n')}\n`
 
-  return enqueueFileWrite(runState, 'eventLogQueue', runState.eventsLogPath, payload)
+  runState.eventLogText = `${runState.eventLogText || ''}${payload}`
+  latestEventsLogText = runState.eventLogText
+  return Promise.resolve()
 }
 
 function updateRunState(runState, overrides = {}) {
@@ -1029,6 +1016,7 @@ function updateRunState(runState, overrides = {}) {
     Math.max(runState.resumeContext.pendingCount - completedFiles, 0)
   const currentFile = overrides.currentFile ?? runState.currentFile ?? ''
   const finalMessage = overrides.finalMessage ?? runState.finalMessage ?? ''
+
   runState.startedAt = startedAt
   runState.status = status
   runState.completedFiles = completedFiles
@@ -1038,25 +1026,17 @@ function updateRunState(runState, overrides = {}) {
   runState.endedAt = endedAt
 }
 
-async function writeRunSummary(runState, overrides = {}) {
-  updateRunState(runState, overrides)
-}
-
-async function initializeRunArtifacts(
+function initializeRunState(
   projectRootPath,
   sourceFolderPath,
   resumeContext,
   settings,
   maxParallel,
 ) {
-  const runId = createRunDirectoryName(resumeContext)
-  const { runsDir } = getAnalyzePaths(projectRootPath)
-  const runDirPath = path.join(runsDir, runId)
-  const tempRunDirPath = path.join(getTempRunsRootPath(), runId)
+  const runId = createAnalysisSessionId(resumeContext)
+  latestEventsLogText = ''
 
-  await fs.mkdir(runDirPath, { recursive: true })
-
-  const runState = {
+  return {
     folderPath: projectRootPath,
     sourceFolderPath,
     resumeContext,
@@ -1069,9 +1049,7 @@ async function initializeRunArtifacts(
     consecutiveFailures: 0,
     autoStopRequested: false,
     runId,
-    runDirPath,
-    tempRunDirPath,
-    eventsLogPath: path.join(runDirPath, 'events.log'),
+    tempRunDirPath: '',
     startedAt: new Date().toISOString(),
     endedAt: '',
     status: 'running',
@@ -1089,16 +1067,22 @@ async function initializeRunArtifacts(
     pumping: false,
     needsPump: false,
     finishing: false,
-    eventLogQueue: Promise.resolve(),
+    eventLogText: '',
+  }
+}
+
+async function ensureRunTempDirectory(runState) {
+  if (runState.tempRunDirPath) {
+    return runState.tempRunDirPath
   }
 
-  await writeRunSummary(runState, { status: 'running' })
-  return runState
+  const tempRootPath = getTempAnalysisRootPath()
+  await fs.mkdir(tempRootPath, { recursive: true })
+  runState.tempRunDirPath = await fs.mkdtemp(path.join(tempRootPath, 'worker-'))
+  return runState.tempRunDirPath
 }
 
 async function cleanupWorkerArtifacts(workerState) {
-  await workerState.streamLogQueue
-
   if (
     workerState.outputLastMessagePath &&
     workerState.tempRunDirPath &&
@@ -1115,7 +1099,7 @@ async function cleanupWorkerArtifacts(workerState) {
 async function cleanupRunTempArtifacts(runState) {
   if (
     runState.tempRunDirPath &&
-    isSameOrChildPath(getTempRunsRootPath(), runState.tempRunDirPath)
+    isSameOrChildPath(getTempAnalysisRootPath(), runState.tempRunDirPath)
   ) {
     try {
       await fs.rm(runState.tempRunDirPath, { recursive: true, force: true })
@@ -1164,7 +1148,7 @@ async function finalizeAnalysisRun(runState) {
         message: finalMessage,
       })
       await appendRunEventLog(runState, 'stdout', finalMessage)
-      await writeRunSummary(runState, {
+      updateRunState(runState, {
         status: 'completed',
         completedFiles,
         pendingFiles: 0,
@@ -1204,7 +1188,7 @@ async function finalizeAnalysisRun(runState) {
           : '일부 병렬 작업이 실패했습니다.',
     })
     await appendRunEventLog(runState, 'stderr', error || '일부 분석 작업이 실패했습니다.')
-    await writeRunSummary(runState, {
+    updateRunState(runState, {
       status: 'failed',
       completedFiles,
       pendingFiles,
@@ -1356,8 +1340,6 @@ async function launchAnalysisWorker(runState, workerState) {
     workerState.pendingVideo,
   )
 
-  await fs.mkdir(runState.tempRunDirPath, { recursive: true })
-
   const child = spawnCommand(
     runState.settings.codexCommand,
     [
@@ -1459,15 +1441,15 @@ async function pumpAnalysisQueue(runState) {
         const pendingVideo = runState.pendingQueue.shift()
         const workerIndex = runState.nextWorkerIndex++
         const workerFileBase = createWorkerFileBase(workerIndex)
+        const tempRunDirPath = await ensureRunTempDirectory(runState)
         const workerState = {
           workerIndex,
           pendingVideo,
-          tempRunDirPath: runState.tempRunDirPath,
-          outputLastMessagePath: path.join(runState.tempRunDirPath, `${workerFileBase}.last-message.txt`),
+          tempRunDirPath,
+          outputLastMessagePath: path.join(tempRunDirPath, `${workerFileBase}.last-message.txt`),
           child: null,
           spawnError: '',
           closed: false,
-          streamLogQueue: Promise.resolve(),
         }
 
         try {
@@ -1523,7 +1505,7 @@ async function refreshActiveRunProgress(runState) {
         ? `신규 분석 ${completedFiles}/${totalPending}개 완료`
         : `${totalPending}개 파일 분석을 시작합니다.`,
   })
-  await writeRunSummary(runState, {
+  updateRunState(runState, {
     status: 'running',
     completedFiles,
     pendingFiles,
@@ -1655,9 +1637,8 @@ async function startAnalysis(sourceFolderPath) {
 
   const resumeContext = await getResumeContext(projectRootPath, sourceFolderPath)
   await enrichPendingVideosWithMetadata(resumeContext, settings, sourceFolderPath)
-  await writeTaskFile(projectRootPath, resumeContext)
   const maxParallel = Math.min(resolveMaxParallel(settings), Math.max(resumeContext.pendingCount, 1))
-  const runState = await initializeRunArtifacts(
+  const runState = initializeRunState(
     projectRootPath,
     sourceFolderPath,
     resumeContext,
@@ -1680,14 +1661,14 @@ async function startAnalysis(sourceFolderPath) {
 
   if (resumeContext.pendingCount === 0) {
     const finalMessage = '같은 영상은 다시 분석하지 않고 기존 Markdown 결과를 사용했습니다.'
+    emitAnalysisEvent({ type: 'started', folderPath: projectRootPath, model: runState.codexModel, reasoningEffort: runState.codexReasoning })
     emitAnalysisEvent({
       type: 'log',
       stream: 'stdout',
-      message: `실행 로그 폴더: ${runState.runDirPath}`,
+      message: finalMessage,
     })
-    await appendRunEventLog(runState, 'stdout', `실행 로그 폴더: ${runState.runDirPath}`)
     await appendRunEventLog(runState, 'stdout', finalMessage)
-    await writeRunSummary(runState, {
+    updateRunState(runState, {
       status: 'completed',
       completedFiles: 0,
       pendingFiles: 0,
@@ -1695,7 +1676,6 @@ async function startAnalysis(sourceFolderPath) {
       finalMessage,
       endedAt: new Date().toISOString(),
     })
-    emitAnalysisEvent({ type: 'started', folderPath: projectRootPath, model: runState.codexModel, reasoningEffort: runState.codexReasoning })
     emitAnalysisEvent({
       type: 'completed',
       folderPath: projectRootPath,
@@ -1712,9 +1692,9 @@ async function startAnalysis(sourceFolderPath) {
   emitAnalysisEvent({
     type: 'log',
     stream: 'stdout',
-    message: `실행 로그 폴더: ${runState.runDirPath}`,
+    message: 'events.log는 실행 로그창에서 다운로드할 수 있습니다.',
   })
-  void appendRunEventLog(runState, 'stdout', `실행 로그 폴더: ${runState.runDirPath}`)
+  void appendRunEventLog(runState, 'stdout', 'events.log는 실행 로그창에서 다운로드할 수 있습니다.')
   emitAnalysisEvent({
     type: 'log',
     stream: 'stdout',
@@ -1771,7 +1751,7 @@ async function cancelAnalysis() {
 
   await writeProgressFile(folderPath, { status: 'cancelled', message: '사용자가 분석을 취소했습니다.' })
   await appendRunEventLog(activeRun, 'stderr', '사용자가 분석을 취소했습니다.')
-  await writeRunSummary(activeRun, {
+  updateRunState(activeRun, {
     status: 'cancelled',
     currentFile: '',
     finalMessage: '사용자가 분석을 취소했습니다.',
@@ -1781,6 +1761,32 @@ async function cancelAnalysis() {
   await cleanupRunTempArtifacts(activeRun)
   activeRun = null
   return { ok: true }
+}
+
+async function downloadEventsLog() {
+  if (!latestEventsLogText.trim()) {
+    throw new Error('저장할 실행 로그가 없습니다.')
+  }
+
+  const saveDialogOptions = {
+    title: 'events.log 저장',
+    defaultPath: 'events.log',
+    filters: [
+      { name: 'Log Files', extensions: ['log'] },
+      { name: 'All Files', extensions: ['*'] },
+    ],
+  }
+  const result =
+    mainWindow && !mainWindow.isDestroyed()
+      ? await dialog.showSaveDialog(mainWindow, saveDialogOptions)
+      : await dialog.showSaveDialog(saveDialogOptions)
+
+  if (result.canceled || !result.filePath) {
+    return { ok: false, cancelled: true }
+  }
+
+  await fs.writeFile(result.filePath, latestEventsLogText, 'utf8')
+  return { ok: true, filePath: result.filePath }
 }
 
 async function getEnvironmentStatus(settingsOverride = null) {
@@ -2053,6 +2059,7 @@ ipcMain.handle('analysis:load', async (_event, folderPath) => loadAnalysis(folde
 ipcMain.handle('analysis:load-progress', async (_event, folderPath) => loadAnalysisProgress(folderPath))
 ipcMain.handle('analysis:start', async (_event, folderPath) => startAnalysis(folderPath))
 ipcMain.handle('analysis:cancel', async () => cancelAnalysis())
+ipcMain.handle('analysis:download-events-log', async () => downloadEventsLog())
 ipcMain.on('shell:start-drag', (event, payload) => {
   const filePath = typeof payload?.filePath === 'string' ? payload.filePath : ''
   const iconPath = typeof payload?.iconPath === 'string' ? payload.iconPath : ''
