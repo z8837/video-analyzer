@@ -110,20 +110,11 @@ function App() {
       return analysis?.videos ?? []
     }
 
-    return (analysis?.videos ?? []).filter((video) => {
-      const haystack = [
-        video.title,
-        video.summary,
-        video.fileName,
-        video.relativePath,
-        ...video.details,
-        ...video.categories,
-        ...video.keywords,
-      ]
-        .join(' ')
-        .toLowerCase()
+    const normalizedFilters = deferredFilters.map(normalizeSearchText).filter(Boolean)
 
-      return deferredFilters.every((filter) => haystack.includes(filter.toLowerCase()))
+    return (analysis?.videos ?? []).filter((video) => {
+      const haystack = buildAnalysisSearchHaystack(video)
+      return normalizedFilters.every((filter) => haystack.includes(filter))
     })
   }, [analysis, deferredFilters])
 
@@ -1031,6 +1022,57 @@ function pickSelectedVideoPath(
   }
 
   return ''
+}
+
+function normalizeSearchText(value: string) {
+  return value.normalize('NFC').toLowerCase()
+}
+
+function getFolderSearchTerms(video: AnalysisVideo) {
+  const folderPath =
+    (video.folderRelativePath && video.folderRelativePath !== '.'
+      ? video.folderRelativePath
+      : getFolderPathFromRelativePath(video.relativePath)) || ''
+
+  if (!folderPath) {
+    return []
+  }
+
+  const normalizedFolderPath = folderPath.replace(/\\/g, '/')
+  const folderParts = normalizedFolderPath.split('/').filter(Boolean)
+
+  return [
+    normalizedFolderPath,
+    normalizedFolderPath.replaceAll('/', ' '),
+    normalizedFolderPath.replaceAll('/', ''),
+    ...folderParts,
+  ]
+}
+
+function getFolderPathFromRelativePath(relativePath: string) {
+  if (!relativePath.includes('/')) {
+    return ''
+  }
+
+  return relativePath.slice(0, relativePath.lastIndexOf('/'))
+}
+
+function buildAnalysisSearchHaystack(video: AnalysisVideo) {
+  return normalizeSearchText(
+    [
+      video.title,
+      video.summary,
+      video.fileName,
+      video.relativePath,
+      video.folderRelativePath || '',
+      ...getFolderSearchTerms(video),
+      ...video.details,
+      ...video.categories,
+      ...video.keywords,
+    ]
+      .filter(Boolean)
+      .join(' '),
+  )
 }
 
 function formatFolderPath(folderPath: string, rootFolder: string) {
