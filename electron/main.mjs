@@ -897,19 +897,28 @@ function buildAppMenu() {
   ])
 }
 
-function buildPromptWithContext(projectRootPath, sourceFolderPath, resumeContext, taskFilePath) {
+function buildPromptWithContext(projectRootPath, sourceFolderPath, resumeContext, taskPayload, frameDescriptors) {
+  const taskJsonLine = `Task JSON: ${JSON.stringify(taskPayload)}`
+  const frameLine = frameDescriptors && frameDescriptors.length > 0
+    ? `Attached sample frames (in order): ${frameDescriptors
+        .map((frame, index) => `#${index + 1} at ~${frame.timeSeconds}s`)
+        .join(', ')}.`
+    : 'No sample frames were pre-extracted; rely on the task metadata.'
   return [
     `The current working directory is "${projectRootPath}".`,
     `The selected source folder is "${sourceFolderPath}".`,
     `The selected source folder relative to the project root is "${resumeContext.folderRelativePath}".`,
-    `Read "${taskFilePath}" and analyze only the pending videos listed there for this worker.`,
+    'The task payload is inlined below. Do NOT try to read it from disk; parse this JSON directly.',
+    taskJsonLine,
     `Reuse count for this run: ${resumeContext.reusableCount}. Pending new analyses: ${resumeContext.pendingCount}.`,
+    'The sandbox is read-only. Do not run any shell, ffmpeg, ffprobe, python, PowerShell, or any other tool. Rely entirely on the inlined task JSON and the attached frame images.',
+    frameLine,
     'Do not inspect unrelated repository files or scan the whole project.',
     'Do not create or update any markdown files yourself.',
     'Do not create or update analyze/results.json, analyze/index.md, preview videos, or permanent sample-sheet images.',
-    'Each pending video in the task file has a pre-extracted "metadata" object with durationSeconds, width, height, fps, hasAudio. Use it directly instead of running ffprobe.',
-    'Each pending video may also include sampleTimesSeconds. Use those timeline points when you extract representative frames.',
-    'Keep the workflow short: extract a few representative frames with ffmpeg if needed, then describe what you see.',
+    'Each pending video in the task JSON has a pre-extracted "metadata" object with durationSeconds, width, height, fps, hasAudio. Use it directly.',
+    'Each pending video may also include sampleTimesSeconds that correspond to the attached frames in the same order.',
+    'Describe what you actually see in the attached frames. Do not fabricate details that are not visible.',
     'On Windows, never embed Korean literals inside PowerShell command strings or here-strings.',
     'Keep Korean text only in your final response JSON. The desktop app will write the UTF-8 markdown files for you.',
     'Your final response must be exactly one JSON object and nothing else.',
@@ -1158,6 +1167,13 @@ async function initializeRunArtifacts(
 
 async function cleanupWorkerArtifacts(workerState) {
   await workerState.streamLogQueue
+  if (workerState.frameDir) {
+    try {
+      await fs.rm(workerState.frameDir, { recursive: true, force: true })
+    } catch {
+      // Ignore cleanup failures.
+    }
+  }
 }
 
 async function finalizeAnalysisRun(runState) {
@@ -1383,25 +1399,48 @@ async function handleWorkerClose(runState, workerState, code) {
 async function launchAnalysisWorker(runState, workerState) {
   const workerContext = createWorkerResumeContext(runState.resumeContext, workerState.pendingVideo)
 
-  await writeJson(
-    workerState.taskFilePath,
-    buildWorkerTaskPayload(
-      runState.folderPath,
-      runState.sourceFolderPath,
-      runState.resumeContext,
-      workerState.pendingVideo,
-    ),
+  const taskPayload = buildWorkerTaskPayload(
+    runState.folderPath,
+    runState.sourceFolderPath,
+    runState.resumeContext,
+    workerState.pendingVideo,
   )
+
+  await writeJson(workerState.taskFilePath, taskPayload)
+
+  const workerFileBase = createWorkerFileBase(workerState.workerIndex)
+  const frameDir = path.join(runState.runDirPath, `${workerFileBase}.frames`)
+  let extractedFrames = []
+  try {
+    const videoAbsPath = path.join(runState.sourceFolderPath, workerState.pendingVideo.fileName)
+    extractedFrames = await extractSampleFrames({
+      ffmpegCommand: runState.settings.ffmpegCommand,
+      env: runState.env,
+      videoPath: videoAbsPath,
+      sampleTimesSeconds: workerState.pendingVideo.sampleTimesSeconds,
+      outputDir: frameDir,
+      baseName: workerFileBase,
+    })
+  } catch {
+    extractedFrames = []
+  }
+  workerState.frameDir = frameDir
+  workerState.extractedFrames = extractedFrames
+
+  const imageArgs = extractedFrames.flatMap(({ framePath }) => ['-i', framePath])
 
   const child = spawnCommand(
     runState.settings.codexCommand,
     [
       'exec',
-      '--full-auto',
+      '--sandbox',
+      'read-only',
       '--skip-git-repo-check',
       '--ephemeral',
       '--color',
       'never',
+      '-c',
+      'approval_policy="never"',
       '-C',
       runState.folderPath,
       '-m',
@@ -1410,6 +1449,7 @@ async function launchAnalysisWorker(runState, workerState) {
       `model_reasoning_effort=${JSON.stringify(runState.codexReasoning)}`,
       '-c',
       `model_instructions_file=${JSON.stringify(normalizePathForConfig(runState.instructionsPath))}`,
+      ...imageArgs,
       '-o',
       workerState.outputLastMessagePath,
       '-',
@@ -1477,7 +1517,8 @@ async function launchAnalysisWorker(runState, workerState) {
       runState.folderPath,
       runState.sourceFolderPath,
       workerContext,
-      workerState.taskFilePath,
+      taskPayload,
+      extractedFrames,
     ),
   )
 }
@@ -1646,6 +1687,45 @@ async function probeVideoMetadata(videoPath, ffprobeCommand, env) {
   } catch {
     return null
   }
+}
+
+async function extractSampleFrames({
+  ffmpegCommand,
+  env,
+  videoPath,
+  sampleTimesSeconds,
+  outputDir,
+  baseName,
+}) {
+  const times = Array.isArray(sampleTimesSeconds) && sampleTimesSeconds.length > 0
+    ? sampleTimesSeconds.slice(0, 4)
+    : [0.8]
+
+  await fs.mkdir(outputDir, { recursive: true })
+
+  const produced = []
+  for (let i = 0; i < times.length; i += 1) {
+    const seconds = Number(times[i])
+    if (!Number.isFinite(seconds) || seconds < 0) continue
+    const framePath = path.join(outputDir, `${baseName}-frame-${String(i + 1).padStart(2, '0')}.jpg`)
+    const result = await runCommand(
+      ffmpegCommand,
+      [
+        '-y',
+        '-ss', seconds.toFixed(2),
+        '-i', videoPath,
+        '-frames:v', '1',
+        '-vf', 'scale=540:-2',
+        '-q:v', '4',
+        framePath,
+      ],
+      env,
+    )
+    if (result.ok && (await fileExists(framePath))) {
+      produced.push({ framePath, timeSeconds: Math.round(seconds * 10) / 10 })
+    }
+  }
+  return produced
 }
 
 async function enrichPendingVideosWithMetadata(resumeContext, settings, sourceFolderPath) {
