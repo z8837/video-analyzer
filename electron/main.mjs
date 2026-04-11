@@ -25,6 +25,7 @@ import {
   readLibraryEntries,
   readResolvedLibraryEntries,
   writePendingAnalysesFromReport,
+  writeTaskFile,
 } from './library-runtime.mjs'
 import {
   readLatestRateLimits,
@@ -47,7 +48,6 @@ const DEFAULT_DRAG_ICON_DATA_URL =
 
 let mainWindow = null
 let activeRun = null
-let latestEventsLogText = ''
 let latestCodexRateLimits = null
 let stopCodexRateLimitsWatcher = null
 
@@ -897,21 +897,28 @@ function buildAppMenu() {
   ])
 }
 
-function buildPromptWithContext(projectRootPath, sourceFolderPath, resumeContext, taskPayload) {
-  const taskJson = JSON.stringify(taskPayload, null, 2)
-
+function buildPromptWithContext(projectRootPath, sourceFolderPath, resumeContext, taskPayload, frameDescriptors) {
+  const taskJsonLine = `Task JSON: ${JSON.stringify(taskPayload)}`
+  const frameLine = frameDescriptors && frameDescriptors.length > 0
+    ? `Attached sample frames (in order): ${frameDescriptors
+        .map((frame, index) => `#${index + 1} at ~${frame.timeSeconds}s`)
+        .join(', ')}.`
+    : 'No sample frames were pre-extracted; rely on the task metadata.'
   return [
     `The current working directory is "${projectRootPath}".`,
     `The selected source folder is "${sourceFolderPath}".`,
     `The selected source folder relative to the project root is "${resumeContext.folderRelativePath}".`,
-    'Analyze only the pending videos listed in the inline Task JSON below for this worker.',
+    'The task payload is inlined below. Do NOT try to read it from disk; parse this JSON directly.',
+    taskJsonLine,
     `Reuse count for this run: ${resumeContext.reusableCount}. Pending new analyses: ${resumeContext.pendingCount}.`,
+    'The sandbox is read-only. Do not run any shell, ffmpeg, ffprobe, python, PowerShell, or any other tool. Rely entirely on the inlined task JSON and the attached frame images.',
+    frameLine,
     'Do not inspect unrelated repository files or scan the whole project.',
     'Do not create or update any markdown files yourself.',
-    'Do not create or update analyze/runs, task files, run metadata, logs, analyze/results.json, analyze/index.md, preview videos, or permanent sample-sheet images.',
-    'Each pending video in the Task JSON has a pre-extracted "metadata" object with durationSeconds, width, height, fps, hasAudio. Use it directly instead of running ffprobe.',
-    'Each pending video may also include sampleTimesSeconds. Use those timeline points when you extract representative frames.',
-    'Keep the workflow short: extract a few representative frames with ffmpeg if needed, then describe what you see.',
+    'Do not create or update analyze/results.json, analyze/index.md, preview videos, or permanent sample-sheet images.',
+    'Each pending video in the task JSON has a pre-extracted "metadata" object with durationSeconds, width, height, fps, hasAudio. Use it directly.',
+    'Each pending video may also include sampleTimesSeconds that correspond to the attached frames in the same order.',
+    'Describe what you actually see in the attached frames. Do not fabricate details that are not visible.',
     'On Windows, never embed Korean literals inside PowerShell command strings or here-strings.',
     'Keep Korean text only in your final response JSON. The desktop app will write the UTF-8 markdown files for you.',
     'Your final response must be exactly one JSON object and nothing else.',
@@ -922,10 +929,8 @@ function buildPromptWithContext(projectRootPath, sourceFolderPath, resumeContext
     'If an object is visible for the whole clip, prefer the first clearly readable moment after the opening instant, usually around 0.8 to 1.5 seconds for longer clips.',
     'Prefer keywords tied to distinct scene elements or moments that help the user jump to a meaningful point in the timeline.',
     'Each analyses item must contain source, fileName, title, summary, details, categories, keywords, keywordMoments, durationSeconds, width, height, fps, hasAudio, sampleImage, generatedAt, model, reasoningEffort.',
-    'The analyses array must contain one item for every pending video from the Task JSON and source must exactly match the Task JSON.',
+    'The analyses array must contain one item for every pending video from the task file and source must exactly match the task file.',
     'Copy source exactly from the task JSON; do not translate, normalize, re-encode, or reconstruct Korean folder/file names.',
-    'Task JSON:',
-    taskJson,
   ].join('\n')
 }
 
@@ -965,7 +970,7 @@ function prefixLogMessage(prefix, message) {
     .join('\n')
 }
 
-function createAnalysisSessionId(resumeContext) {
+function createRunDirectoryName(resumeContext) {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
   const folderSegment =
     resumeContext.folderRelativePath === '.'
@@ -977,8 +982,18 @@ function createAnalysisSessionId(resumeContext) {
   return `${timestamp}-${folderSegment}`
 }
 
-function getTempAnalysisRootPath() {
-  return path.join(app.getPath('temp'), 'codex-video-analyzer')
+function enqueueFileWrite(owner, key, filePath, contents) {
+  owner[key] = (owner[key] || Promise.resolve())
+    .then(() => fs.appendFile(filePath, contents, 'utf8'))
+    .catch(() => {
+      // Ignore log persistence failures and keep the run alive.
+    })
+
+  return owner[key]
+}
+
+function getRelativeLogPath(runState, filePath) {
+  return toPosixPath(path.relative(runState.runDirPath, filePath))
 }
 
 function createWorkerFileBase(workerIndex) {
@@ -1000,12 +1015,21 @@ function appendRunEventLog(runState, stream, message) {
     .map((line) => `[${timestamp}] [${stream}] ${line}`)
     .join('\n')}\n`
 
-  runState.eventLogText = `${runState.eventLogText || ''}${payload}`
-  latestEventsLogText = runState.eventLogText
-  return Promise.resolve()
+  return enqueueFileWrite(runState, 'eventLogQueue', runState.eventsLogPath, payload)
 }
 
-function updateRunState(runState, overrides = {}) {
+function appendWorkerStreamLog(workerState, stream, message) {
+  const text = String(message || '')
+  if (!text) {
+    return Promise.resolve()
+  }
+
+  const suffix = text.endsWith('\n') ? '' : '\n'
+  const filePath = stream === 'stderr' ? workerState.stderrLogPath : workerState.stdoutLogPath
+  return enqueueFileWrite(workerState, 'streamLogQueue', filePath, `${text}${suffix}`)
+}
+
+function buildRunSummary(runState, overrides = {}) {
   const startedAt = overrides.startedAt ?? runState.startedAt
   const endedAt = overrides.endedAt ?? runState.endedAt ?? ''
   const status = overrides.status ?? runState.status ?? 'running'
@@ -1016,27 +1040,90 @@ function updateRunState(runState, overrides = {}) {
     Math.max(runState.resumeContext.pendingCount - completedFiles, 0)
   const currentFile = overrides.currentFile ?? runState.currentFile ?? ''
   const finalMessage = overrides.finalMessage ?? runState.finalMessage ?? ''
+  const failures = (overrides.failures ?? runState.failures ?? []).map((failure) => ({
+    workerIndex: failure.workerIndex,
+    source: failure.source,
+    error: failure.error,
+    finalMessage: failure.finalMessage || '',
+  }))
 
-  runState.startedAt = startedAt
-  runState.status = status
-  runState.completedFiles = completedFiles
-  runState.pendingFiles = pendingFiles
-  runState.currentFile = currentFile
-  runState.finalMessage = finalMessage
-  runState.endedAt = endedAt
+  return {
+    schemaVersion: 1,
+    runId: runState.runId,
+    startedAt,
+    endedAt,
+    status,
+    folderPath: runState.folderPath,
+    sourceFolderPath: runState.sourceFolderPath,
+    folderRelativePath: runState.resumeContext.folderRelativePath,
+    totalFiles: runState.resumeContext.totalFiles,
+    reusableCount: runState.resumeContext.reusableCount,
+    pendingCount: runState.resumeContext.pendingCount,
+    completedFiles,
+    pendingFiles,
+    maxParallel: runState.maxParallel,
+    currentFile,
+    finalMessage,
+    settings: {
+      codexCommand: runState.settings.codexCommand,
+      ffmpegCommand: runState.settings.ffmpegCommand,
+    },
+    files: {
+      eventsLog: getRelativeLogPath(runState, runState.eventsLogPath),
+      taskSnapshot: getRelativeLogPath(runState, runState.taskSnapshotPath),
+    },
+    workers: runState.workerRecords.map((worker) => ({
+      workerIndex: worker.workerIndex,
+      source: worker.source,
+      taskFile: getRelativeLogPath(runState, worker.taskFilePath),
+      stdoutLog: getRelativeLogPath(runState, worker.stdoutLogPath),
+      stderrLog: getRelativeLogPath(runState, worker.stderrLogPath),
+      lastMessageFile: getRelativeLogPath(runState, worker.outputLastMessagePath),
+    })),
+    failures,
+  }
 }
 
-function initializeRunState(
+async function writeRunSummary(runState, overrides = {}) {
+  const nextSummary = buildRunSummary(runState, overrides)
+
+  runState.status = nextSummary.status
+  runState.completedFiles = nextSummary.completedFiles
+  runState.pendingFiles = nextSummary.pendingFiles
+  runState.currentFile = nextSummary.currentFile
+  runState.finalMessage = nextSummary.finalMessage
+  runState.endedAt = nextSummary.endedAt
+
+  await writeJson(runState.summaryPath, nextSummary)
+}
+
+async function initializeRunArtifacts(
   projectRootPath,
   sourceFolderPath,
   resumeContext,
   settings,
   maxParallel,
 ) {
-  const runId = createAnalysisSessionId(resumeContext)
-  latestEventsLogText = ''
+  const runId = createRunDirectoryName(resumeContext)
+  const { runsDir } = getAnalyzePaths(projectRootPath)
+  const runDirPath = path.join(runsDir, runId)
 
-  return {
+  await fs.mkdir(runDirPath, { recursive: true })
+
+  const taskSnapshotPath = path.join(runDirPath, 'task.json')
+  await writeJson(taskSnapshotPath, {
+    schemaVersion: 1,
+    generatedAt: resumeContext.generatedAt,
+    projectRootPath,
+    sourceFolderPath,
+    sourceFolderRelativePath: resumeContext.folderRelativePath,
+    totalFiles: resumeContext.totalFiles,
+    reusableCount: resumeContext.reusableCount,
+    pendingCount: resumeContext.pendingCount,
+    pendingVideos: resumeContext.pendingVideos,
+  })
+
+  const runState = {
     folderPath: projectRootPath,
     sourceFolderPath,
     resumeContext,
@@ -1049,7 +1136,10 @@ function initializeRunState(
     consecutiveFailures: 0,
     autoStopRequested: false,
     runId,
-    tempRunDirPath: '',
+    runDirPath,
+    taskSnapshotPath,
+    eventsLogPath: path.join(runDirPath, 'events.log'),
+    summaryPath: path.join(runDirPath, 'run.json'),
     startedAt: new Date().toISOString(),
     endedAt: '',
     status: 'running',
@@ -1060,6 +1150,7 @@ function initializeRunState(
     maxParallel,
     pendingQueue: [...resumeContext.pendingVideos],
     workers: new Map(),
+    workerRecords: [],
     failures: [],
     nextWorkerIndex: 1,
     cancelRequested: false,
@@ -1067,44 +1158,20 @@ function initializeRunState(
     pumping: false,
     needsPump: false,
     finishing: false,
-    eventLogText: '',
-  }
-}
-
-async function ensureRunTempDirectory(runState) {
-  if (runState.tempRunDirPath) {
-    return runState.tempRunDirPath
+    eventLogQueue: Promise.resolve(),
   }
 
-  const tempRootPath = getTempAnalysisRootPath()
-  await fs.mkdir(tempRootPath, { recursive: true })
-  runState.tempRunDirPath = await fs.mkdtemp(path.join(tempRootPath, 'worker-'))
-  return runState.tempRunDirPath
+  await writeRunSummary(runState, { status: 'running' })
+  return runState
 }
 
 async function cleanupWorkerArtifacts(workerState) {
-  if (
-    workerState.outputLastMessagePath &&
-    workerState.tempRunDirPath &&
-    isSameOrChildPath(workerState.tempRunDirPath, workerState.outputLastMessagePath)
-  ) {
+  await workerState.streamLogQueue
+  if (workerState.frameDir) {
     try {
-      await fs.rm(workerState.outputLastMessagePath, { force: true })
+      await fs.rm(workerState.frameDir, { recursive: true, force: true })
     } catch {
-      // Ignore temporary output cleanup errors.
-    }
-  }
-}
-
-async function cleanupRunTempArtifacts(runState) {
-  if (
-    runState.tempRunDirPath &&
-    isSameOrChildPath(getTempAnalysisRootPath(), runState.tempRunDirPath)
-  ) {
-    try {
-      await fs.rm(runState.tempRunDirPath, { recursive: true, force: true })
-    } catch {
-      // Ignore temporary output cleanup errors.
+      // Ignore cleanup failures.
     }
   }
 }
@@ -1148,7 +1215,7 @@ async function finalizeAnalysisRun(runState) {
         message: finalMessage,
       })
       await appendRunEventLog(runState, 'stdout', finalMessage)
-      updateRunState(runState, {
+      await writeRunSummary(runState, {
         status: 'completed',
         completedFiles,
         pendingFiles: 0,
@@ -1188,7 +1255,7 @@ async function finalizeAnalysisRun(runState) {
           : '일부 병렬 작업이 실패했습니다.',
     })
     await appendRunEventLog(runState, 'stderr', error || '일부 분석 작업이 실패했습니다.')
-    updateRunState(runState, {
+    await writeRunSummary(runState, {
       status: 'failed',
       completedFiles,
       pendingFiles,
@@ -1204,8 +1271,6 @@ async function finalizeAnalysisRun(runState) {
       finalMessage,
     })
   } finally {
-    await cleanupRunTempArtifacts(runState)
-
     if (activeRun === runState) {
       activeRun = null
     }
@@ -1333,6 +1398,7 @@ async function handleWorkerClose(runState, workerState, code) {
 
 async function launchAnalysisWorker(runState, workerState) {
   const workerContext = createWorkerResumeContext(runState.resumeContext, workerState.pendingVideo)
+
   const taskPayload = buildWorkerTaskPayload(
     runState.folderPath,
     runState.sourceFolderPath,
@@ -1340,15 +1406,40 @@ async function launchAnalysisWorker(runState, workerState) {
     workerState.pendingVideo,
   )
 
+  await writeJson(workerState.taskFilePath, taskPayload)
+
+  const workerFileBase = createWorkerFileBase(workerState.workerIndex)
+  const frameDir = path.join(runState.runDirPath, `${workerFileBase}.frames`)
+  let extractedFrames = []
+  try {
+    const videoAbsPath = path.join(runState.sourceFolderPath, workerState.pendingVideo.fileName)
+    extractedFrames = await extractSampleFrames({
+      ffmpegCommand: runState.settings.ffmpegCommand,
+      env: runState.env,
+      videoPath: videoAbsPath,
+      sampleTimesSeconds: workerState.pendingVideo.sampleTimesSeconds,
+      outputDir: frameDir,
+      baseName: workerFileBase,
+    })
+  } catch {
+    extractedFrames = []
+  }
+  workerState.frameDir = frameDir
+  workerState.extractedFrames = extractedFrames
+
+  const imageArgs = extractedFrames.flatMap(({ framePath }) => ['-i', framePath])
+
   const child = spawnCommand(
     runState.settings.codexCommand,
     [
       'exec',
-      '--full-auto',
+      '--sandbox',
+      'read-only',
       '--skip-git-repo-check',
-      '--ephemeral',
       '--color',
       'never',
+      '-c',
+      'approval_policy="never"',
       '-C',
       runState.folderPath,
       '-m',
@@ -1357,6 +1448,7 @@ async function launchAnalysisWorker(runState, workerState) {
       `model_reasoning_effort=${JSON.stringify(runState.codexReasoning)}`,
       '-c',
       `model_instructions_file=${JSON.stringify(normalizePathForConfig(runState.instructionsPath))}`,
+      ...imageArgs,
       '-o',
       workerState.outputLastMessagePath,
       '-',
@@ -1366,6 +1458,14 @@ async function launchAnalysisWorker(runState, workerState) {
 
   workerState.child = child
   runState.workers.set(workerState.workerIndex, workerState)
+  runState.workerRecords.push({
+    workerIndex: workerState.workerIndex,
+    source: workerState.pendingVideo.source,
+    taskFilePath: workerState.taskFilePath,
+    stdoutLogPath: workerState.stdoutLogPath,
+    stderrLogPath: workerState.stderrLogPath,
+    outputLastMessagePath: workerState.outputLastMessagePath,
+  })
 
   emitAnalysisEvent({
     type: 'log',
@@ -1386,6 +1486,8 @@ async function launchAnalysisWorker(runState, workerState) {
       })
       void appendRunEventLog(runState, 'stdout', displayMessage)
     }
+
+    void appendWorkerStreamLog(workerState, 'stdout', rawMessage)
   })
   child.stderr.on('data', (chunk) => {
     const rawMessage = chunk.toString()
@@ -1399,6 +1501,8 @@ async function launchAnalysisWorker(runState, workerState) {
       })
       void appendRunEventLog(runState, 'stderr', displayMessage)
     }
+
+    void appendWorkerStreamLog(workerState, 'stderr', rawMessage)
   })
   child.on('error', (error) => {
     workerState.spawnError = error.message
@@ -1413,6 +1517,7 @@ async function launchAnalysisWorker(runState, workerState) {
       runState.sourceFolderPath,
       workerContext,
       taskPayload,
+      extractedFrames,
     ),
   )
 }
@@ -1441,15 +1546,17 @@ async function pumpAnalysisQueue(runState) {
         const pendingVideo = runState.pendingQueue.shift()
         const workerIndex = runState.nextWorkerIndex++
         const workerFileBase = createWorkerFileBase(workerIndex)
-        const tempRunDirPath = await ensureRunTempDirectory(runState)
         const workerState = {
           workerIndex,
           pendingVideo,
-          tempRunDirPath,
-          outputLastMessagePath: path.join(tempRunDirPath, `${workerFileBase}.last-message.txt`),
+          taskFilePath: path.join(runState.runDirPath, `${workerFileBase}.task.json`),
+          outputLastMessagePath: path.join(runState.runDirPath, `${workerFileBase}.last-message.txt`),
+          stdoutLogPath: path.join(runState.runDirPath, `${workerFileBase}.stdout.log`),
+          stderrLogPath: path.join(runState.runDirPath, `${workerFileBase}.stderr.log`),
           child: null,
           spawnError: '',
           closed: false,
+          streamLogQueue: Promise.resolve(),
         }
 
         try {
@@ -1505,7 +1612,7 @@ async function refreshActiveRunProgress(runState) {
         ? `신규 분석 ${completedFiles}/${totalPending}개 완료`
         : `${totalPending}개 파일 분석을 시작합니다.`,
   })
-  updateRunState(runState, {
+  await writeRunSummary(runState, {
     status: 'running',
     completedFiles,
     pendingFiles,
@@ -1581,6 +1688,50 @@ async function probeVideoMetadata(videoPath, ffprobeCommand, env) {
   }
 }
 
+async function extractSampleFrames({
+  ffmpegCommand,
+  env,
+  videoPath,
+  sampleTimesSeconds,
+  outputDir,
+  baseName,
+}) {
+  const times = Array.isArray(sampleTimesSeconds) && sampleTimesSeconds.length > 0
+    ? sampleTimesSeconds
+    : [0.8]
+
+  await fs.mkdir(outputDir, { recursive: true })
+
+  const extractions = times.map(async (raw, index) => {
+    const seconds = Number(raw)
+    if (!Number.isFinite(seconds) || seconds < 0) return null
+    const framePath = path.join(
+      outputDir,
+      `${baseName}-frame-${String(index + 1).padStart(2, '0')}.jpg`,
+    )
+    const result = await runCommand(
+      ffmpegCommand,
+      [
+        '-y',
+        '-ss', seconds.toFixed(2),
+        '-i', videoPath,
+        '-frames:v', '1',
+        '-vf', 'scale=540:-2',
+        '-q:v', '4',
+        framePath,
+      ],
+      env,
+    )
+    if (result.ok && (await fileExists(framePath))) {
+      return { framePath, timeSeconds: Math.round(seconds * 10) / 10 }
+    }
+    return null
+  })
+
+  const results = await Promise.all(extractions)
+  return results.filter(Boolean)
+}
+
 async function enrichPendingVideosWithMetadata(resumeContext, settings, sourceFolderPath) {
   if (resumeContext.pendingVideos.length === 0) {
     return
@@ -1606,11 +1757,28 @@ function buildSuggestedSampleTimes(durationSeconds) {
     return []
   }
 
-  const rawCandidates = durationSeconds <= 3
-    ? [0.4, durationSeconds * 0.4, Math.max(durationSeconds - 0.4, 0.6)]
-    : [0.8, durationSeconds * 0.25, durationSeconds * 0.5, durationSeconds * 0.75, durationSeconds - 0.8]
+  let count
+  if (durationSeconds <= 5) count = 2
+  else if (durationSeconds <= 30) count = 4
+  else if (durationSeconds <= 60) count = 6
+  else if (durationSeconds <= 120) count = 8
+  else count = 10
 
-  const rounded = rawCandidates
+  const margin = durationSeconds <= 5 ? 0.3 : 0.8
+  const start = Math.min(margin, durationSeconds * 0.1)
+  const end = Math.max(durationSeconds - margin, durationSeconds * 0.9)
+
+  const times = []
+  if (count === 1) {
+    times.push(start)
+  } else {
+    const step = (end - start) / (count - 1)
+    for (let i = 0; i < count; i += 1) {
+      times.push(start + step * i)
+    }
+  }
+
+  const rounded = times
     .map((seconds) => Math.max(0, Math.min(durationSeconds, Math.round(seconds * 10) / 10)))
     .filter((seconds) => seconds < durationSeconds)
 
@@ -1637,8 +1805,9 @@ async function startAnalysis(sourceFolderPath) {
 
   const resumeContext = await getResumeContext(projectRootPath, sourceFolderPath)
   await enrichPendingVideosWithMetadata(resumeContext, settings, sourceFolderPath)
+  await writeTaskFile(projectRootPath, resumeContext)
   const maxParallel = Math.min(resolveMaxParallel(settings), Math.max(resumeContext.pendingCount, 1))
-  const runState = initializeRunState(
+  const runState = await initializeRunArtifacts(
     projectRootPath,
     sourceFolderPath,
     resumeContext,
@@ -1661,14 +1830,14 @@ async function startAnalysis(sourceFolderPath) {
 
   if (resumeContext.pendingCount === 0) {
     const finalMessage = '같은 영상은 다시 분석하지 않고 기존 Markdown 결과를 사용했습니다.'
-    emitAnalysisEvent({ type: 'started', folderPath: projectRootPath, model: runState.codexModel, reasoningEffort: runState.codexReasoning })
     emitAnalysisEvent({
       type: 'log',
       stream: 'stdout',
-      message: finalMessage,
+      message: `실행 로그 폴더: ${runState.runDirPath}`,
     })
+    await appendRunEventLog(runState, 'stdout', `실행 로그 폴더: ${runState.runDirPath}`)
     await appendRunEventLog(runState, 'stdout', finalMessage)
-    updateRunState(runState, {
+    await writeRunSummary(runState, {
       status: 'completed',
       completedFiles: 0,
       pendingFiles: 0,
@@ -1676,6 +1845,7 @@ async function startAnalysis(sourceFolderPath) {
       finalMessage,
       endedAt: new Date().toISOString(),
     })
+    emitAnalysisEvent({ type: 'started', folderPath: projectRootPath, model: runState.codexModel, reasoningEffort: runState.codexReasoning })
     emitAnalysisEvent({
       type: 'completed',
       folderPath: projectRootPath,
@@ -1692,9 +1862,9 @@ async function startAnalysis(sourceFolderPath) {
   emitAnalysisEvent({
     type: 'log',
     stream: 'stdout',
-    message: 'events.log는 실행 로그창에서 다운로드할 수 있습니다.',
+    message: `실행 로그 폴더: ${runState.runDirPath}`,
   })
-  void appendRunEventLog(runState, 'stdout', 'events.log는 실행 로그창에서 다운로드할 수 있습니다.')
+  void appendRunEventLog(runState, 'stdout', `실행 로그 폴더: ${runState.runDirPath}`)
   emitAnalysisEvent({
     type: 'log',
     stream: 'stdout',
@@ -1751,42 +1921,15 @@ async function cancelAnalysis() {
 
   await writeProgressFile(folderPath, { status: 'cancelled', message: '사용자가 분석을 취소했습니다.' })
   await appendRunEventLog(activeRun, 'stderr', '사용자가 분석을 취소했습니다.')
-  updateRunState(activeRun, {
+  await writeRunSummary(activeRun, {
     status: 'cancelled',
     currentFile: '',
     finalMessage: '사용자가 분석을 취소했습니다.',
     endedAt: new Date().toISOString(),
   })
   emitAnalysisEvent({ type: 'cancelled', folderPath })
-  await cleanupRunTempArtifacts(activeRun)
   activeRun = null
   return { ok: true }
-}
-
-async function downloadEventsLog() {
-  if (!latestEventsLogText.trim()) {
-    throw new Error('저장할 실행 로그가 없습니다.')
-  }
-
-  const saveDialogOptions = {
-    title: 'events.log 저장',
-    defaultPath: 'events.log',
-    filters: [
-      { name: 'Log Files', extensions: ['log'] },
-      { name: 'All Files', extensions: ['*'] },
-    ],
-  }
-  const result =
-    mainWindow && !mainWindow.isDestroyed()
-      ? await dialog.showSaveDialog(mainWindow, saveDialogOptions)
-      : await dialog.showSaveDialog(saveDialogOptions)
-
-  if (result.canceled || !result.filePath) {
-    return { ok: false, cancelled: true }
-  }
-
-  await fs.writeFile(result.filePath, latestEventsLogText, 'utf8')
-  return { ok: true, filePath: result.filePath }
 }
 
 async function getEnvironmentStatus(settingsOverride = null) {
@@ -2059,7 +2202,6 @@ ipcMain.handle('analysis:load', async (_event, folderPath) => loadAnalysis(folde
 ipcMain.handle('analysis:load-progress', async (_event, folderPath) => loadAnalysisProgress(folderPath))
 ipcMain.handle('analysis:start', async (_event, folderPath) => startAnalysis(folderPath))
 ipcMain.handle('analysis:cancel', async () => cancelAnalysis())
-ipcMain.handle('analysis:download-events-log', async () => downloadEventsLog())
 ipcMain.on('shell:start-drag', (event, payload) => {
   const filePath = typeof payload?.filePath === 'string' ? payload.filePath : ''
   const iconPath = typeof payload?.iconPath === 'string' ? payload.iconPath : ''
@@ -2078,8 +2220,58 @@ ipcMain.handle('shell:show-item', async (_event, targetPath) => {
   return true
 })
 ipcMain.handle('shell:open-path', async (_event, targetPath) => shell.openPath(targetPath))
+async function pingCodexForRateLimits(settings) {
+  return new Promise((resolve) => {
+    let child
+    try {
+      child = spawnCommand(
+        settings.codexCommand,
+        [
+          'exec',
+          '--sandbox', 'read-only',
+          '--skip-git-repo-check',
+          '--color', 'never',
+          '-c', 'approval_policy="never"',
+          '-',
+        ],
+        { env: buildChildEnv(settings) },
+      )
+    } catch {
+      resolve(false)
+      return
+    }
+
+    const timeout = setTimeout(() => {
+      try { child.kill() } catch { /* ignore */ }
+      resolve(false)
+    }, 30000)
+
+    child.on('error', () => {
+      clearTimeout(timeout)
+      resolve(false)
+    })
+    child.on('close', () => {
+      clearTimeout(timeout)
+      resolve(true)
+    })
+
+    try {
+      child.stdin.end('ok\n')
+    } catch { /* ignore */ }
+  })
+}
+
 ipcMain.handle('codex:get-rate-limits', async (_event, options = {}) => {
-  if (!options?.force && latestCodexRateLimits) return latestCodexRateLimits
+  if (options?.force) {
+    try {
+      const settings = await loadSettings()
+      await pingCodexForRateLimits(settings)
+    } catch { /* ignore ping errors */ }
+    const snapshot = await readLatestRateLimits()
+    if (snapshot) emitCodexRateLimits(snapshot)
+    return latestCodexRateLimits
+  }
+  if (latestCodexRateLimits) return latestCodexRateLimits
   const snapshot = await readLatestRateLimits()
   if (snapshot) latestCodexRateLimits = snapshot
   return latestCodexRateLimits
