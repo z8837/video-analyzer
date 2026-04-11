@@ -20,7 +20,9 @@ export function FolderTreeBranch({
   const hasChildren = node.children.length > 0
   const isExpanded = expandedPaths.has(node.path)
   const isSelected = node.path === selectedPath
-  const label = node.relativePath === '.' ? '기본 폴더' : node.name
+  const isRoot = node.relativePath === '.'
+  const label = isRoot ? '기본 폴더' : node.name
+  const primaryCount = isRoot ? node.directVideoCount : node.totalVideoCount
 
   return (
     <div className="tree-branch">
@@ -36,7 +38,8 @@ export function FolderTreeBranch({
         <span className="tree-arrow">{hasChildren ? (isExpanded ? '▾' : '▸') : ''}</span>
         <span className="tree-icon">📁</span>
         <span className="tree-name">{label}</span>
-        <span className="tree-count">{node.totalVideoCount}</span>
+        <span className="tree-count">{primaryCount}</span>
+        {isRoot && <span className="tree-total-count">전체 {node.totalVideoCount}</span>}
       </button>
 
       {hasChildren && isExpanded && (

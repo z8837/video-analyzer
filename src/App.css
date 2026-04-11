@@ -1114,8 +1114,19 @@
   font-weight: 700;
 }
 
+.tree-total-count {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
 .tree-row.selected .tree-count {
   background: rgba(43, 122, 120, 0.15);
+  color: #2b7a78;
+}
+
+.tree-row.selected .tree-total-count {
   color: #2b7a78;
 }
 
