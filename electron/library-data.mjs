@@ -256,6 +256,216 @@ function uniqueStrings(values) {
   return normalized
 }
 
+function normalizeSearchText(value) {
+  return String(value).normalize('NFC').toLowerCase().trim()
+}
+
+const BROAD_CATEGORY_INFERENCE_RULES = [
+  {
+    category: '음식',
+    terms: [
+      '음식',
+      '먹거리',
+      '식사',
+      '요리',
+      '간식',
+      '디저트',
+      '안주',
+      '반찬',
+      '도시락',
+      '계란',
+      '달걀',
+      '짜장',
+      '짜장면',
+      '라면',
+      '파스타',
+      '피자',
+      '햄버거',
+      '샌드위치',
+      '김밥',
+      '초밥',
+      '스시',
+      '빵',
+      '케이크',
+      '과자',
+      '아이스크림',
+      '초콜릿',
+      '사탕',
+      '과일',
+      '채소',
+      '샐러드',
+      '고기',
+      '치킨',
+      '돼지고기',
+      '소고기',
+      '생선',
+      '해산물',
+      '국',
+      '찌개',
+      '카레',
+      '떡볶이',
+    ],
+  },
+  {
+    category: '음료',
+    terms: ['음료', '음료수', '마실거리', '커피', '차', '티', '주스', '물', '술', '맥주', '와인', '칵테일', '탄산음료'],
+  },
+  {
+    category: '옷',
+    terms: [
+      '옷',
+      '의류',
+      '복장',
+      '의상',
+      '패션',
+      '코디',
+      '착장',
+      '드레스',
+      '정장',
+      '수트',
+      '셔츠',
+      '티셔츠',
+      '후드티',
+      '니트',
+      '자켓',
+      '재킷',
+      '코트',
+      '치마',
+      '스커트',
+      '바지',
+      '청바지',
+      '원피스',
+      '블라우스',
+      '패딩',
+    ],
+  },
+  {
+    category: '신발',
+    terms: ['신발', '구두', '운동화', '스니커즈', '샌들', '부츠', '힐', '로퍼'],
+  },
+  {
+    category: '가방',
+    terms: ['가방', '백', '핸드백', '백팩', '배낭', '지갑', '파우치'],
+  },
+  {
+    category: '액세서리',
+    terms: ['액세서리', '악세사리', '장신구', '주얼리', '쥬얼리', '목걸이', '반지', '귀걸이', '팔찌', '모자', '안경', '선글라스', '시계'],
+  },
+  {
+    category: '사람',
+    terms: ['사람', '인물', '남자', '남성', '여자', '여성', '커플', '부부', '가족', '친구'],
+  },
+  {
+    category: '아이',
+    terms: ['아이', '아기', '유아', '어린이', '키즈', '학생'],
+  },
+  {
+    category: '동물',
+    terms: ['동물', '반려동물', '펫', '애완동물', '강아지', '고양이', '개', '새', '말'],
+  },
+  {
+    category: '신체',
+    terms: [
+      '몸',
+      '신체',
+      '머리',
+      '머리카락',
+      '얼굴',
+      '표정',
+      '눈',
+      '코',
+      '입',
+      '입술',
+      '귀',
+      '목',
+      '어깨',
+      '숄더',
+      '팔',
+      '팔뚝',
+      '손',
+      '손가락',
+      '가슴',
+      '등',
+      '허리',
+      '배',
+      '복부',
+      '엉덩이',
+      '골반',
+      '다리',
+      '허벅지',
+      '무릎',
+      '종아리',
+      '발',
+      '발목',
+    ],
+  },
+  {
+    category: '차',
+    terms: ['자동차', '차량', '승용차', '트럭', '버스', '택시', '오토바이', '자전거'],
+  },
+  {
+    category: '자연',
+    terms: ['자연', '풍경', '야외', '산', '숲', '공원', '꽃', '나무', '하늘', '구름', '해', '노을'],
+  },
+  {
+    category: '바다',
+    terms: ['바다', '바닷가', '해변', '수영장', '강', '호수', '계곡', '파도'],
+  },
+  {
+    category: '운동',
+    terms: ['운동', '스포츠', '헬스', '피트니스', '러닝', '달리기', '요가', '축구', '농구', '테니스', '골프', '등산'],
+  },
+  {
+    category: '음악',
+    terms: ['음악', '노래', '춤', '댄스', '공연', '연주', '악기', '가수', '밴드'],
+  },
+  {
+    category: '뷰티',
+    terms: ['뷰티', '미용', '메이크업', '화장', '헤어', '네일', '스킨케어'],
+  },
+  {
+    category: '집',
+    terms: ['집', '실내', '인테리어', '거실', '침실', '주방', '욕실', '홈'],
+  },
+  {
+    category: '여행',
+    terms: ['여행', '관광', '휴가', '여행지', '호텔', '공항', '비행기', '기차'],
+  },
+  {
+    category: '도시',
+    terms: ['도시', '거리', '길거리', '도로', '골목', '상점', '시장'],
+  },
+  {
+    category: '업무',
+    terms: ['업무', '사무실', '회사', '오피스', '회의'],
+  },
+  {
+    category: '웨딩',
+    terms: ['웨딩', '결혼식', '파티', '행사', '축제', '생일'],
+  },
+]
+
+function inferBroadCategories({ title, summary, details, categories, keywords, keywordMoments }) {
+  const searchableText = normalizeSearchText(
+    [
+      title,
+      summary,
+      ...details,
+      ...categories,
+      ...keywords,
+      ...(keywordMoments || []).map((keywordMoment) => keywordMoment.label),
+    ].join(' '),
+  )
+
+  const inferredCategories = BROAD_CATEGORY_INFERENCE_RULES
+    .filter((rule) =>
+      rule.terms.some((term) => searchableText.includes(normalizeSearchText(term))),
+    )
+    .map((rule) => rule.category)
+
+  return uniqueStrings([...inferredCategories, ...categories]).slice(0, 5)
+}
+
 function normalizeBoolean(value) {
   if (typeof value === 'boolean') {
     return value
@@ -381,6 +591,14 @@ export function normalizeAnalysisRecord(raw, defaults = {}, options = {}) {
     ...keywordMoments.map((keywordMoment) => keywordMoment.label),
     ...normalizeStringArray(raw.keywords),
   ]).slice(0, 8)
+  categories = inferBroadCategories({
+    title,
+    summary,
+    details,
+    categories,
+    keywords,
+    keywordMoments,
+  })
   keywordMoments = keywordMoments.filter((keywordMoment) => keywords.includes(keywordMoment.label))
   const searchableText = [title, summary, ...details, ...categories, ...keywords].join(' ')
   const corruptedText = isLikelyCorruptedText(searchableText)

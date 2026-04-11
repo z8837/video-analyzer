@@ -85,9 +85,16 @@ Field rules:
 - `title`: short Korean display title.
 - `summary`: 1 to 2 sentence Korean summary.
 - `details`: 2 to 6 concrete Korean scene descriptions.
-- `categories`: 1 to 5 short Korean tags.
-- `keywords`: 2 to 8 searchable Korean keywords.
+- `categories`: 1 to 5 short Korean broad parent concepts. Use higher-level search words such as `음식`, `음료`, `옷`, `사람`, `동물`, `신체`, `차`, `자연`.
+- `keywords`: 2 to 8 searchable Korean specific keywords.
 - `keywordMoments`: 2 to 8 objects with the same keyword labels and an approximate appearance time in seconds.
+- If a specific keyword belongs to a broader concept, include both:
+  - put the broad concept in `categories`
+  - put the concrete item in `keywords`
+- Example:
+  - dress or suit video -> `categories` should include `옷`, while `keywords` can include `드레스`, `정장`
+  - egg or jjajangmyeon video -> `categories` should include `음식`, while `keywords` can include `계란`, `짜장면`
+  - shoulder-focused video -> `categories` should include `신체`, while `keywords` can include `어깨`, `숄더`
 - Keep each `timeSeconds` within the video duration and round to one decimal place when possible.
 - If a keyword is visible from the beginning, `0` is acceptable.
 - `keywordMoments` should be useful jump anchors for the player, not just generic labels anchored at `0`.
