@@ -365,6 +365,14 @@ export async function readResolvedLibraryEntries(projectRootPath) {
   }
 }
 
+export async function writeTaskFile(projectRootPath, resumeContext) {
+  const { analyzeDir } = getAnalyzePaths(projectRootPath)
+  await fs.mkdir(analyzeDir, { recursive: true })
+  const taskFilePath = path.join(analyzeDir, '_task.json')
+  await fs.writeFile(taskFilePath, JSON.stringify(resumeContext, null, 2), 'utf8')
+  return taskFilePath
+}
+
 export async function getResumeContext(projectRootPath, sourceFolderPath) {
   const { entries } = await readResolvedLibraryEntries(projectRootPath)
   const existingByPath = new Map(entries.map((entry) => [entry.record.source, entry]))

@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import type { DragEvent, RefObject } from 'react'
 import { KeywordJumpSection } from '../components/KeywordJumpSection'
 import { LibraryVideoCard } from '../components/LibraryVideoCard'
@@ -52,6 +53,12 @@ export function AnalysisLibraryPage({
   formatVideoFolderPath,
   getKeywordJumpTargets,
 }: AnalysisLibraryPageProps) {
+  const detailPaneRef = useRef<HTMLElement>(null)
+
+  useEffect(() => {
+    detailPaneRef.current?.scrollTo({ top: 0, behavior: 'auto' })
+  }, [librarySelectedVideoPath])
+
   return (
     <div className="library-view">
       <section className="library-content">
@@ -127,7 +134,7 @@ export function AnalysisLibraryPage({
         </div>
       </section>
 
-      <aside className="detail-pane panel">
+      <aside ref={detailPaneRef} className="detail-pane panel">
         {librarySelectedVideo ? (
           <>
             <video

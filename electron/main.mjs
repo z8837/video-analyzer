@@ -2222,6 +2222,11 @@ ipcMain.handle('shell:show-item', async (_event, targetPath) => {
 ipcMain.handle('shell:open-path', async (_event, targetPath) => shell.openPath(targetPath))
 async function pingCodexForRateLimits(settings) {
   return new Promise((resolve) => {
+    if (!settings || typeof settings.codexCommand !== 'string' || !settings.codexCommand.trim()) {
+      resolve(false)
+      return
+    }
+
     let child
     try {
       child = spawnCommand(
@@ -2234,30 +2239,40 @@ async function pingCodexForRateLimits(settings) {
           '-c', 'approval_policy="never"',
           '-',
         ],
-        { env: buildChildEnv(settings) },
+        { env: buildChildEnv(settings), stdio: ['pipe', 'pipe', 'pipe'] },
       )
     } catch {
       resolve(false)
       return
     }
 
+    if (!child) {
+      resolve(false)
+      return
+    }
+
+    let settled = false
+    const finish = (value) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      resolve(value)
+    }
+
     const timeout = setTimeout(() => {
       try { child.kill() } catch { /* ignore */ }
-      resolve(false)
+      finish(false)
     }, 30000)
 
-    child.on('error', () => {
-      clearTimeout(timeout)
-      resolve(false)
-    })
-    child.on('close', () => {
-      clearTimeout(timeout)
-      resolve(true)
-    })
+    child.on('error', () => finish(false))
+    child.on('close', () => finish(true))
 
-    try {
-      child.stdin.end('ok\n')
-    } catch { /* ignore */ }
+    if (child.stdin) {
+      child.stdin.on('error', () => { /* ignore EPIPE */ })
+      try {
+        child.stdin.end('ok\n')
+      } catch { /* ignore */ }
+    }
   })
 }
 

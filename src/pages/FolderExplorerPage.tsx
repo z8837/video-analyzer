@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import type { DragEvent, RefObject } from 'react'
 import { FolderTreeBranch } from '../components/FolderTreeBranch'
 import { KeywordJumpSection } from '../components/KeywordJumpSection'
@@ -67,7 +68,18 @@ export function FolderExplorerPage({
   formatVideoFolderPath,
   getKeywordJumpTargets,
 }: FolderExplorerPageProps) {
+  const videoGridRef = useRef<HTMLDivElement>(null)
+  const detailPaneRef = useRef<HTMLElement>(null)
   const selectedVideo = folderSelectedVideo ?? folderSelectedAnalysis
+
+  useEffect(() => {
+    videoGridRef.current?.scrollTo({ top: 0, behavior: 'auto' })
+    detailPaneRef.current?.scrollTo({ top: 0, behavior: 'auto' })
+  }, [selectedFolderPath])
+
+  useEffect(() => {
+    detailPaneRef.current?.scrollTo({ top: 0, behavior: 'auto' })
+  }, [folderSelectedVideoPath])
 
   return (
     <div className="folder-view">
@@ -142,7 +154,7 @@ export function FolderExplorerPage({
           </div>
         </div>
 
-        <div className="video-grid">
+        <div className="video-grid" ref={videoGridRef}>
           {folderVideos.map((video) => (
             <button
               key={video.absolutePath}
@@ -179,7 +191,7 @@ export function FolderExplorerPage({
         </div>
       </section>
 
-      <aside className="detail-pane panel">
+      <aside ref={detailPaneRef} className="detail-pane panel">
         {selectedVideo ? (
           <>
             <video
