@@ -1436,7 +1436,6 @@ async function launchAnalysisWorker(runState, workerState) {
       '--sandbox',
       'read-only',
       '--skip-git-repo-check',
-      '--ephemeral',
       '--color',
       'never',
       '-c',
@@ -2221,8 +2220,58 @@ ipcMain.handle('shell:show-item', async (_event, targetPath) => {
   return true
 })
 ipcMain.handle('shell:open-path', async (_event, targetPath) => shell.openPath(targetPath))
+async function pingCodexForRateLimits(settings) {
+  return new Promise((resolve) => {
+    let child
+    try {
+      child = spawnCommand(
+        settings.codexCommand,
+        [
+          'exec',
+          '--sandbox', 'read-only',
+          '--skip-git-repo-check',
+          '--color', 'never',
+          '-c', 'approval_policy="never"',
+          '-',
+        ],
+        { env: buildChildEnv(settings) },
+      )
+    } catch {
+      resolve(false)
+      return
+    }
+
+    const timeout = setTimeout(() => {
+      try { child.kill() } catch { /* ignore */ }
+      resolve(false)
+    }, 30000)
+
+    child.on('error', () => {
+      clearTimeout(timeout)
+      resolve(false)
+    })
+    child.on('close', () => {
+      clearTimeout(timeout)
+      resolve(true)
+    })
+
+    try {
+      child.stdin.end('ok\n')
+    } catch { /* ignore */ }
+  })
+}
+
 ipcMain.handle('codex:get-rate-limits', async (_event, options = {}) => {
-  if (!options?.force && latestCodexRateLimits) return latestCodexRateLimits
+  if (options?.force) {
+    try {
+      const settings = await loadSettings()
+      await pingCodexForRateLimits(settings)
+    } catch { /* ignore ping errors */ }
+    const snapshot = await readLatestRateLimits()
+    if (snapshot) emitCodexRateLimits(snapshot)
+    return latestCodexRateLimits
+  }
+  if (latestCodexRateLimits) return latestCodexRateLimits
   const snapshot = await readLatestRateLimits()
   if (snapshot) latestCodexRateLimits = snapshot
   return latestCodexRateLimits
