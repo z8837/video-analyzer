@@ -56,10 +56,10 @@ Artifacts are written to the `release/` folder.
 
 Typical outputs:
 
-- `Codex Video Analyzer-0.1.0-mac-arm64.dmg`
-- `Codex Video Analyzer-0.1.0-mac-arm64.zip`
-- `Codex Video Analyzer-0.1.0-mac-universal.dmg`
-- `Codex Video Analyzer-0.1.0-mac-universal.zip`
+- `Codex Video Analyzer-0.2.0-mac-arm64.dmg`
+- `Codex Video Analyzer-0.2.0-mac-arm64.zip`
+- `Codex Video Analyzer-0.2.0-mac-universal.dmg`
+- `Codex Video Analyzer-0.2.0-mac-universal.zip`
 
 ## Notes
 

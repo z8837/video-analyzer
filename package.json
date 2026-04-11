@@ -1,7 +1,7 @@
 {
   "name": "codex-video-analyzer",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "tokeii",
   "description": "Cross-platform desktop GUI for folder-scoped video analysis with Codex CLI",
   "type": "module",
@@ -46,7 +46,7 @@
       ],
       "category": "public.app-category.video",
       "artifactName": "${productName}-${version}-mac-${arch}.${ext}",
-      "identity": null
+      "identity": "-"
     },
     "win": {
       "target": [
