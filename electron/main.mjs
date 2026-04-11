@@ -1698,16 +1698,18 @@ async function extractSampleFrames({
   baseName,
 }) {
   const times = Array.isArray(sampleTimesSeconds) && sampleTimesSeconds.length > 0
-    ? sampleTimesSeconds.slice(0, 4)
+    ? sampleTimesSeconds
     : [0.8]
 
   await fs.mkdir(outputDir, { recursive: true })
 
-  const produced = []
-  for (let i = 0; i < times.length; i += 1) {
-    const seconds = Number(times[i])
-    if (!Number.isFinite(seconds) || seconds < 0) continue
-    const framePath = path.join(outputDir, `${baseName}-frame-${String(i + 1).padStart(2, '0')}.jpg`)
+  const extractions = times.map(async (raw, index) => {
+    const seconds = Number(raw)
+    if (!Number.isFinite(seconds) || seconds < 0) return null
+    const framePath = path.join(
+      outputDir,
+      `${baseName}-frame-${String(index + 1).padStart(2, '0')}.jpg`,
+    )
     const result = await runCommand(
       ffmpegCommand,
       [
@@ -1722,10 +1724,13 @@ async function extractSampleFrames({
       env,
     )
     if (result.ok && (await fileExists(framePath))) {
-      produced.push({ framePath, timeSeconds: Math.round(seconds * 10) / 10 })
+      return { framePath, timeSeconds: Math.round(seconds * 10) / 10 }
     }
-  }
-  return produced
+    return null
+  })
+
+  const results = await Promise.all(extractions)
+  return results.filter(Boolean)
 }
 
 async function enrichPendingVideosWithMetadata(resumeContext, settings, sourceFolderPath) {
@@ -1753,11 +1758,28 @@ function buildSuggestedSampleTimes(durationSeconds) {
     return []
   }
 
-  const rawCandidates = durationSeconds <= 3
-    ? [0.4, durationSeconds * 0.4, Math.max(durationSeconds - 0.4, 0.6)]
-    : [0.8, durationSeconds * 0.25, durationSeconds * 0.5, durationSeconds * 0.75, durationSeconds - 0.8]
+  let count
+  if (durationSeconds <= 5) count = 2
+  else if (durationSeconds <= 30) count = 4
+  else if (durationSeconds <= 60) count = 6
+  else if (durationSeconds <= 120) count = 8
+  else count = 10
 
-  const rounded = rawCandidates
+  const margin = durationSeconds <= 5 ? 0.3 : 0.8
+  const start = Math.min(margin, durationSeconds * 0.1)
+  const end = Math.max(durationSeconds - margin, durationSeconds * 0.9)
+
+  const times = []
+  if (count === 1) {
+    times.push(start)
+  } else {
+    const step = (end - start) / (count - 1)
+    for (let i = 0; i < count; i += 1) {
+      times.push(start + step * i)
+    }
+  }
+
+  const rounded = times
     .map((seconds) => Math.max(0, Math.min(durationSeconds, Math.round(seconds * 10) / 10)))
     .filter((seconds) => seconds < durationSeconds)
 
